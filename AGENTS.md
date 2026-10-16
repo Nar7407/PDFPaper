@@ -35,13 +35,13 @@ for touch. Do not copy PdfCraft/ArtCraft code, logos or branding.
 
 ## Current status
 (Updated at the end of every session. Newest at the top.)
-- Last session: none yet
-- Done: nothing yet
+- Last session: 2026-10-16 — T0 done. Skeleton with :app (shows "PDFPaper") + :engine (PdfEngine + 1 test) builds green.
+- Done: T0
 - Broken / known issues: none yet
-- Next task: T0
+- Next task: T1
 
 ## Milestone checklist
-- [ ] T0  Project skeleton compiles
+- [x] T0  Project skeleton compiles
 - [ ] T1  App shell + file picker
 - [ ] T2  Engine: file structure + xref
 - [ ] T3  Engine: corpus test harness
@@ -59,6 +59,9 @@ for touch. Do not copy PdfCraft/ArtCraft code, logos or branding.
 
 ## Decisions log
 (Date, decision, reason. Add a line whenever something is decided.)
+- 2026-10-16: Build with Microsoft JDK 17 at C:\Tools\jdk-17 (Gradle 8.7 does not run on Android Studio's JBR 25).
+- 2026-10-16: Manifest has no android:icon (no launcher icon asset yet; avoids missing-resource build error).
+- 2026-10-16: T0 :app screen shows only "PDFPaper"; the earlier PdfRenderer viewer was removed and returns incrementally (T1 file picker, T9 engine-based viewer).
 
 ## Test corpus
 Folder: /testdata (real-world PDFs). Metric: files that open without crash / total.
