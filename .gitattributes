@@ -1,0 +1,4 @@
+# Keep binaries byte-exact: line-ending conversion would corrupt xref offsets.
+*.pdf binary
+*.jar binary
+*.bin binary
