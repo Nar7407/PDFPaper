@@ -19,3 +19,16 @@ dependencies {
 tasks.withType<Test> {
     useJUnit()
 }
+
+val testdataDir = rootProject.file("testdata")
+val corpusReport = layout.buildDirectory.file("corpus-report.txt")
+
+tasks.register<JavaExec>("corpusCheck") {
+    group = "verification"
+    description = "Opens every PDF in /testdata with the engine and writes build/corpus-report.txt."
+    classpath = sourceSets["main"].runtimeClasspath
+    mainClass.set("com.pdfpaper.engine.tools.CorpusCheckKt")
+    args(testdataDir.absolutePath, corpusReport.get().asFile.absolutePath)
+    inputs.dir(testdataDir)
+    outputs.file(corpusReport)
+}
