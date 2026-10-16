@@ -1,7 +1,10 @@
 package com.pdfpaper.engine.tools
 
 import com.pdfpaper.engine.io.FileSource
-import com.pdfpaper.engine.xref.PdfFile
+import com.pdfpaper.engine.model.PdfDocument
+import com.pdfpaper.engine.model.PdfRef
+import com.pdfpaper.engine.model.PdfStream
+import com.pdfpaper.engine.filter.decoded
 import java.io.File
 
 private data class FileResult(
@@ -9,6 +12,8 @@ private data class FileResult(
     val ok: Boolean,
     val objects: Int,
     val rebuilt: Boolean,
+    val streamsTotal: Int,
+    val streamsDecoded: Int,
     val reason: String
 )
 
@@ -29,17 +34,20 @@ fun main(args: Array<String>) {
 
     val results = pdfs.map { checkOne(it) }
     val okCount = results.count { it.ok }
+    val streamsTotal = results.sumOf { it.streamsTotal }
+    val streamsDecoded = results.sumOf { it.streamsDecoded }
 
     val lines = buildList {
         add("PDFPaper corpus report")
         add("Engine: ${engineVersion()}")
         add("Directory: ${dir.absolutePath}")
         add("Total: ${results.size} files, $okCount opened OK, ${results.size - okCount} failed")
+        add("Streams: $streamsDecoded/$streamsTotal decoded")
         add("")
         for (r in results) {
             if (r.ok) {
                 val suffix = if (r.rebuilt) ", rebuilt from scan" else ""
-                add("[OK] ${r.name} (objects=${r.objects}$suffix)")
+                add("[OK] ${r.name} (objects=${r.objects}$suffix) (streams=${r.streamsDecoded}/${r.streamsTotal} decoded)")
             } else {
                 add("[FAIL] ${r.name}: ${r.reason}")
             }
@@ -47,27 +55,51 @@ fun main(args: Array<String>) {
     }
     reportFile.parentFile?.mkdirs()
     reportFile.writeText(lines.joinToString("\n") + "\n")
-    println(lines.take(4).joinToString("\n"))
+    println(lines.take(5).joinToString("\n"))
     println("Report: ${reportFile.absolutePath}")
 }
 
 private fun checkOne(file: File): FileResult {
     return try {
-        val result = PdfFile.open(FileSource(file))
+        val result = PdfDocument.open(FileSource(file))
         result.fold(
-            onSuccess = { pdf ->
-                pdf.use {
-                    FileResult(file.name, true, it.objectCount, it.rebuiltFromScan, "")
+            onSuccess = { doc ->
+                doc.use {
+                    var total = 0
+                    var decoded = 0
+                    for (objNum in it.file.entries.keys) {
+                        val obj = try {
+                            it.deref(objNum)
+                        } catch (t: Throwable) {
+                            null
+                        } ?: continue
+                        if (obj is PdfStream) {
+                            total++
+                            val ok = try {
+                                it.decodeStream(obj).isSuccess
+                            } catch (t: Throwable) {
+                                false
+                            }
+                            if (ok) decoded++
+                        }
+                    }
+                    FileResult(
+                        file.name, true, it.file.objectCount, it.file.rebuiltFromScan,
+                        total, decoded, ""
+                    )
                 }
             },
             onFailure = { e ->
-                FileResult(file.name, false, 0, false, shortReason(e))
+                FileResult(file.name, false, 0, false, 0, 0, shortReason(e))
             }
         )
     } catch (t: Throwable) {
-        FileResult(file.name, false, 0, false, shortReason(t))
+        FileResult(file.name, false, 0, false, 0, 0, shortReason(t))
     }
 }
+
+private fun PdfDocument.decodeStream(stream: PdfStream) =
+    stream.decoded { ref: PdfRef -> deref(ref.objNum) }
 
 private fun shortReason(t: Throwable): String {
     val name = t::class.simpleName ?: "Throwable"
