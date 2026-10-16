@@ -35,14 +35,14 @@ for touch. Do not copy PdfCraft/ArtCraft code, logos or branding.
 
 ## Current status
 (Updated at the end of every session. Newest at the top.)
-- Last session: 2026-10-16 — T0 done. Skeleton with :app (shows "PDFPaper") + :engine (PdfEngine + 1 test) builds green.
-- Done: T0
+- Last session: 2026-10-16 — T1 done. Home + Viewer screens with nav, SAF picker, cache copy, per-screen ViewModels; 4 new app unit tests, build green.
+- Done: T0, T1
 - Broken / known issues: none yet
-- Next task: T1
+- Next task: T2
 
 ## Milestone checklist
 - [x] T0  Project skeleton compiles
-- [ ] T1  App shell + file picker
+- [x] T1  App shell + file picker
 - [ ] T2  Engine: file structure + xref
 - [ ] T3  Engine: corpus test harness
 - [ ] T4  Engine: object model + streams
@@ -62,6 +62,8 @@ for touch. Do not copy PdfCraft/ArtCraft code, logos or branding.
 - 2026-10-16: Build with Microsoft JDK 17 at C:\Tools\jdk-17 (Gradle 8.7 does not run on Android Studio's JBR 25).
 - 2026-10-16: Manifest has no android:icon (no launcher icon asset yet; avoids missing-resource build error).
 - 2026-10-16: T0 :app screen shows only "PDFPaper"; the earlier PdfRenderer viewer was removed and returns incrementally (T1 file picker, T9 engine-based viewer).
+- 2026-10-16 (T1): added navigation-compose 2.7.7 (Apache 2.0, 2-screen navigation) and lifecycle-viewmodel-compose 2.7.0 (Apache 2.0, ViewModel per screen); no new test deps (JUnit4 + TemporaryFolder only).
+- 2026-10-16 (T1): copy helper (PdfFileCache) is pure JVM taking InputStream so it is unit-testable without Robolectric; thin ContentResolver querying stays in HomeViewModel.
 
 ## Test corpus
 Folder: /testdata (real-world PDFs). Metric: files that open without crash / total.
