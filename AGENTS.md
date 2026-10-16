@@ -35,15 +35,15 @@ for touch. Do not copy PdfCraft/ArtCraft code, logos or branding.
 
 ## Current status
 (Updated at the end of every session. Newest at the top.)
-- Last session: 2026-10-16 — T1 done. Home + Viewer screens with nav, SAF picker, cache copy, per-screen ViewModels; 4 new app unit tests, build green.
-- Done: T0, T1
+- Last session: 2026-10-16 — T2 done. :engine reads header/startxref, classic + stream xref, /Prev chains, rebuild scan; PdfFile.open returns Result; 10 new engine tests, build green.
+- Done: T0, T1, T2
 - Broken / known issues: none yet
-- Next task: T2
+- Next task: T3
 
 ## Milestone checklist
 - [x] T0  Project skeleton compiles
 - [x] T1  App shell + file picker
-- [ ] T2  Engine: file structure + xref
+- [x] T2  Engine: file structure + xref
 - [ ] T3  Engine: corpus test harness
 - [ ] T4  Engine: object model + streams
 - [ ] T5  Engine: filters (Flate, ASCIIHex, ASCII85, LZW, RunLength)
@@ -64,6 +64,7 @@ for touch. Do not copy PdfCraft/ArtCraft code, logos or branding.
 - 2026-10-16: T0 :app screen shows only "PDFPaper"; the earlier PdfRenderer viewer was removed and returns incrementally (T1 file picker, T9 engine-based viewer).
 - 2026-10-16 (T1): added navigation-compose 2.7.7 (Apache 2.0, 2-screen navigation) and lifecycle-viewmodel-compose 2.7.0 (Apache 2.0, ViewModel per screen); no new test deps (JUnit4 + TemporaryFolder only).
 - 2026-10-16 (T1): copy helper (PdfFileCache) is pure JVM taking InputStream so it is unit-testable without Robolectric; thin ContentResolver querying stays in HomeViewModel.
+- 2026-10-16 (T2): no new dependencies (stdlib/JDK only). Xref sections capped at a 4 MB parse window (larger falls back to rebuild scan); filtered xref streams return null and fall back to rebuild until T5 adds filter decoding. Failed opens close the source; caller closes PdfFile on success.
 
 ## Test corpus
 Folder: /testdata (real-world PDFs). Metric: files that open without crash / total.
