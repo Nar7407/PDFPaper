@@ -35,17 +35,17 @@ for touch. Do not copy PdfCraft/ArtCraft code, logos or branding.
 
 ## Current status
 (Updated at the end of every session. Newest at the top.)
-- Last session: 2026-10-16 — T3 done. :engine:corpusCheck opens all /testdata PDFs, report at engine/build/corpus-report.txt; 10 self-made PDFs, build green.
-- Done: T0, T1, T2, T3
+- Last session: 2026-10-16 — T4 done. :engine object model (tokenizer/parser, lazy resolving with cycle guard, object streams); 26 new tests (37 total), corpus 10/10, build green.
+- Done: T0, T1, T2, T3, T4
 - Broken / known issues: none yet
-- Next task: T4
+- Next task: T5
 
 ## Milestone checklist
 - [x] T0  Project skeleton compiles
 - [x] T1  App shell + file picker
 - [x] T2  Engine: file structure + xref
 - [x] T3  Engine: corpus test harness
-- [ ] T4  Engine: object model + streams
+- [x] T4  Engine: object model + streams
 - [ ] T5  Engine: filters (Flate, ASCIIHex, ASCII85, LZW, RunLength)
 - [ ] T6  Engine: page tree + content streams
 - [ ] T7  Engine: fonts + text
@@ -67,6 +67,7 @@ for touch. Do not copy PdfCraft/ArtCraft code, logos or branding.
 - 2026-10-16 (T2): no new dependencies (stdlib/JDK only). Xref sections capped at a 4 MB parse window (larger falls back to rebuild scan); filtered xref streams return null and fall back to rebuild until T5 adds filter decoding. Failed opens close the source; caller closes PdfFile on success.
 - 2026-10-16 (T3): no new dependencies (Python stdlib generator, engine-only harness). corpusCheck is a JavaExec task that always exits 0; failures are recorded in the report, never fail the build. Harness opens only *.pdf so README/generate.py are ignored.
 - 2026-10-16 (T3 fix): .gitattributes marks *.pdf/*.jar/*.bin binary; git had normalized crlf-endings.pdf CRLF->LF on add (329 vs 346 bytes), re-added byte-exact.
+- 2026-10-16 (T4): no new dependencies. PdfDocument caches resolved objects (incl. misses); cycles resolve to null. Filtered object streams resolve to null until T5. Stream data tokens are skipped by byte position after parsing; stray ')'/lone '>' tokenize as words so binary stream data survives tokenizing.
 
 ## Test corpus
 Folder: /testdata (real-world PDFs). Metric: files that open without crash / total.
