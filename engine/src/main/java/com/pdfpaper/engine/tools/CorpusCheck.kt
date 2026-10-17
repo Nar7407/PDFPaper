@@ -1,5 +1,6 @@
 package com.pdfpaper.engine.tools
 
+import com.pdfpaper.engine.io.ByteArraySource
 import com.pdfpaper.engine.io.FileSource
 import com.pdfpaper.engine.model.PdfDocument
 import com.pdfpaper.engine.model.PdfRef
@@ -8,7 +9,10 @@ import com.pdfpaper.engine.filter.decoded
 import com.pdfpaper.engine.graphics.buildDisplayList
 import com.pdfpaper.engine.page.PageTreeResult
 import com.pdfpaper.engine.page.pageTree
+import com.pdfpaper.engine.page.pages
 import com.pdfpaper.engine.text.extractText
+import com.pdfpaper.engine.write.PdfPageOps
+import com.pdfpaper.engine.write.PdfPageSelection
 import java.io.File
 
 private data class FileResult(
@@ -23,6 +27,7 @@ private data class FileResult(
     val textPages: Int,
     val commands: Int,
     val images: Int,
+    val roundTrip: Boolean,
     val reason: String
 )
 
@@ -49,6 +54,7 @@ fun main(args: Array<String>) {
     val textRunsTotal = results.sumOf { it.textRuns }
     val commandsTotal = results.sumOf { it.commands }
     val imagesTotal = results.sumOf { it.images }
+    val roundTripTotal = results.count { it.roundTrip }
 
     val lines = buildList {
         add("PDFPaper corpus report")
@@ -59,13 +65,15 @@ fun main(args: Array<String>) {
         add("Streams: $streamsDecoded/$streamsTotal decoded")
         add("Text runs: $textRunsTotal")
         add("Display list: $commandsTotal commands, $imagesTotal images")
+        add("Round-trip: $roundTripTotal/${results.size} files (open, save, reopen with the same page count)")
         add("")
         for (r in results) {
             if (r.ok) {
                 val suffix = if (r.rebuilt) ", rebuilt from scan" else ""
+                val rt = if (r.roundTrip) ", round-trip ok" else ", round-trip FAILED"
                 add(
                     "[OK] ${r.name} (objects=${r.objects}$suffix) (streams=${r.streamsDecoded}/${r.streamsTotal} decoded) " +
-                        "(pages=${r.pages}) (text runs=${r.textRuns}) (commands=${r.commands}, images=${r.images})"
+                        "(pages=${r.pages}) (text runs=${r.textRuns}) (commands=${r.commands}, images=${r.images})$rt"
                 )
             } else {
                 add("[FAIL] ${r.name}: ${r.reason}")
@@ -135,19 +143,29 @@ private fun checkOne(file: File): FileResult {
                         Triple(0, 0 to 0, 0 to 0)
                     }
                     val (pages, runsInfo, drawInfo) = pageInfos
+                    val roundTrip = try {
+                        val all = it.pages()
+                        val selections = all.mapIndexed { index, _ -> PdfPageSelection(it, index) }
+                        val written = PdfPageOps.assemble(selections, it).getOrThrow()
+                        PdfDocument.open(ByteArraySource(written)).getOrThrow().use { reopened ->
+                            reopened.pages().size == all.size
+                        }
+                    } catch (t: Throwable) {
+                        false
+                    }
                     FileResult(
                         file.name, true, it.file.objectCount, it.file.rebuiltFromScan,
                         total, decoded, pages, runsInfo.first, runsInfo.second,
-                        drawInfo.first, drawInfo.second, ""
+                        drawInfo.first, drawInfo.second, roundTrip, ""
                     )
                 }
             },
             onFailure = { e ->
-                FileResult(file.name, false, 0, false, 0, 0, 0, 0, 0, 0, 0, shortReason(e))
+                FileResult(file.name, false, 0, false, 0, 0, 0, 0, 0, 0, 0, false, shortReason(e))
             }
         )
     } catch (t: Throwable) {
-        FileResult(file.name, false, 0, false, 0, 0, 0, 0, 0, 0, 0, shortReason(t))
+        FileResult(file.name, false, 0, false, 0, 0, 0, 0, 0, 0, 0, false, shortReason(t))
     }
 }
 

@@ -8,13 +8,17 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.pdfpaper.app.ui.home.HomeScreen
+import com.pdfpaper.app.ui.pages.PagesScreen
 import com.pdfpaper.app.ui.viewer.ViewerScreen
 
 object Routes {
     const val HOME = "home"
     const val VIEWER = "viewer"
+    const val PAGES = "pages"
 
     fun viewer(path: String): String = "$VIEWER?path=${Uri.encode(path)}"
+
+    fun pages(path: String): String = "$PAGES?path=${Uri.encode(path)}"
 }
 
 @Composable
@@ -38,8 +42,20 @@ fun AppNav() {
             )
         ) { backStackEntry ->
             ViewerScreen(
-                path = backStackEntry.arguments?.getString("path").orEmpty()
+                path = backStackEntry.arguments?.getString("path").orEmpty(),
+                onOrganize = { path -> navController.navigate(Routes.pages(path)) }
             )
+        }
+        composable(
+            route = "${Routes.PAGES}?path={path}",
+            arguments = listOf(
+                navArgument("path") {
+                    type = NavType.StringType
+                    defaultValue = ""
+                }
+            )
+        ) { backStackEntry ->
+            PagesScreen(path = backStackEntry.arguments?.getString("path").orEmpty())
         }
     }
 }

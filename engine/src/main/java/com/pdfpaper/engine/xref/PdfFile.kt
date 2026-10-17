@@ -57,6 +57,12 @@ class PdfFile private constructor(
     val trailer: Trailer,
     val entries: Map<Int, XRefEntry>,
     val rebuiltFromScan: Boolean,
+    /**
+     * Offset of the last "startxref" (§7.5.6), i.e. where the newest
+     * cross-reference section begins. Null for rebuilt files (no usable
+     * startxref). An incremental save (§7.5.6) chains to this with /Prev.
+     */
+    val startXrefOffset: Long?,
     private val source: RandomAccessSource
 ) : Closeable {
 
@@ -136,7 +142,7 @@ class PdfFile private constructor(
             val start = XRefParser.findStartXref(source)
             if (start != null) {
                 parseChain(source, start)?.let { (entries, trailer) ->
-                    return PdfFile(header, trailer, entries, false, source)
+                    return PdfFile(header, trailer, entries, false, start, source)
                 }
             }
             // Missing or broken xref: rebuild by scanning for "N G obj".
@@ -144,7 +150,7 @@ class PdfFile private constructor(
             if (rebuilt.isEmpty()) throw IOException("No cross-reference table and no objects found")
             val maxObj = rebuilt.keys.max()
             val trailer = Trailer(maxObj + 1, findCatalogRef(source, rebuilt), null, emptyMap())
-            return PdfFile(header, trailer, rebuilt, true, source)
+            return PdfFile(header, trailer, rebuilt, true, start, source)
         }
 
         /** Cap on bytes read per object when hunting for the catalog after a rebuild. */

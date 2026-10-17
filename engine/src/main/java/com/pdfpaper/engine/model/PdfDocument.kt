@@ -1,5 +1,6 @@
 package com.pdfpaper.engine.model
 
+import com.pdfpaper.engine.filter.decoded
 import com.pdfpaper.engine.io.RandomAccessSource
 import com.pdfpaper.engine.xref.EntryKind
 import com.pdfpaper.engine.xref.PdfFile
@@ -10,8 +11,8 @@ import java.io.Closeable
  *
  * Indirect objects are parsed lazily on first use and cached; reference chains
  * (including cycles) always terminate: cycles resolve to null. Object streams
- * (§7.5.7) are unpacked on demand; filtered (compressed) object streams await
- * T5 (§7.4) and resolve to null until then.
+ * (§7.5.7) are unpacked on demand, decoding their filter chain (§7.4); a stream
+ * that cannot be decoded resolves to null.
  */
 class PdfDocument private constructor(val file: PdfFile) : Closeable {
 
@@ -67,20 +68,23 @@ class PdfDocument private constructor(val file: PdfFile) : Closeable {
 
     private fun readFromObjectStream(streamObjNum: Int, index: Int, wantObjNum: Int): PdfObject? {
         val stream = deref(streamObjNum) as? PdfStream ?: return null
-        if (stream.dict["Filter"] != null) return null // compressed streams await T5
+        // Object streams are normally Flate-compressed (§7.5.7). Decode through
+        // the filter chain; a failed decode (unknown filter, corrupt data) just
+        // yields null so the caller treats the object as missing.
+        val data = stream.decoded { ref -> resolve(ref) }.getOrNull()?.bytes ?: return null
         val count = (stream.dict["N"] as? PdfInteger)?.value?.toIntOrNull() ?: return null
         val first = (stream.dict["First"] as? PdfInteger)?.value?.toIntOrNull() ?: return null
-        if (count <= 0 || first < 0 || first > stream.data.size) return null
+        if (count <= 0 || first < 0 || first > data.size) return null
         if (index < 0 || index >= count) return null
-        val header = stream.data.copyOfRange(0, first).toString(Charsets.ISO_8859_1)
+        val header = data.copyOfRange(0, first).toString(Charsets.ISO_8859_1)
         val numbers = header.trim().split(Regex("\\s+")).map { it.toIntOrNull() ?: return null }
         if (numbers.size != count * 2) return null
         val pairs = numbers.chunked(2).map { it[0] to it[1] }
         if (pairs[index].first != wantObjNum) return null
         val start = first + pairs[index].second
-        val end = if (index + 1 < count) first + pairs[index + 1].second else stream.data.size
-        if (start < first || end < start || end > stream.data.size) return null
-        return parseDirectObject(stream.data.copyOfRange(start, end)).getOrNull()
+        val end = if (index + 1 < count) first + pairs[index + 1].second else data.size
+        if (start < first || end < start || end > data.size) return null
+        return parseDirectObject(data.copyOfRange(start, end)).getOrNull()
     }
 
     override fun close() = file.close()

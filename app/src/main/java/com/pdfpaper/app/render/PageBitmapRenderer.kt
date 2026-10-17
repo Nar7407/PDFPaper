@@ -6,6 +6,7 @@ import android.graphics.Color
 import com.pdfpaper.engine.graphics.buildDisplayList
 import com.pdfpaper.engine.image.ExternalImageDecoder
 import com.pdfpaper.engine.page.PdfPage
+import com.pdfpaper.engine.render.PageBox
 import com.pdfpaper.engine.render.PageGeometry
 import com.pdfpaper.engine.render.PageRenderPlan
 import com.pdfpaper.engine.render.renderDisplayList
@@ -35,9 +36,16 @@ object PageBitmapRenderer {
         maxPixels: Int = PageGeometry.DEFAULT_MAX_PIXELS,
         decoder: ExternalImageDecoder = AndroidImageDecoder,
         /** Directory for embedded font cache files; null disables them. */
-        fontDir: File? = null
+        fontDir: File? = null,
+        /** Extra clockwise rotation on top of the page's /Rotate (T10 thumbnails). */
+        extraRotation: Int = 0
     ): RenderedPage {
-        val box = PageGeometry.boxOf(page)
+        val base = PageGeometry.boxOf(page)
+        val box = if (extraRotation % 360 == 0) {
+            base
+        } else {
+            PageBox(base.left, base.bottom, base.right, base.top, normalizeRotation(base.rotate + extraRotation))
+        }
         val plan = PageGeometry.plan(box, scale, maxPixels)
         val bitmap = Bitmap.createBitmap(plan.pixelWidth, plan.pixelHeight, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)
@@ -50,4 +58,6 @@ object PageBitmapRenderer {
         canvas.restore()
         return RenderedPage(plan, bitmap, displayList.warnings)
     }
+
+    private fun normalizeRotation(degrees: Int): Int = ((degrees % 360) + 360) % 360
 }

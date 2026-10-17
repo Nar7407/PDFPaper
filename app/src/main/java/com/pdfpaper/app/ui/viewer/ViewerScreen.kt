@@ -64,6 +64,7 @@ private const val MAX_ZOOM = 6f
 @Composable
 fun ViewerScreen(
     path: String,
+    onOrganize: (String) -> Unit = {},
     viewModel: ViewerViewModel = viewModel()
 ) {
     val state by viewModel.state.collectAsState()
@@ -99,7 +100,8 @@ fun ViewerScreen(
                 zoom = zoom,
                 onZoomIn = { zoom = (zoom * 1.25f).coerceAtMost(MAX_ZOOM) },
                 onZoomOut = { zoom = (zoom / 1.25f).coerceAtLeast(MIN_ZOOM) },
-                onFit = { zoom = 1f }
+                onFit = { zoom = 1f },
+                onOrganize = { onOrganize(path) }
             )
 
             Box(modifier = Modifier.fillMaxSize()) {
@@ -151,7 +153,8 @@ private fun ViewerToolbar(
     zoom: Float,
     onZoomIn: () -> Unit,
     onZoomOut: () -> Unit,
-    onFit: () -> Unit
+    onFit: () -> Unit,
+    onOrganize: () -> Unit
 ) {
     Surface(tonalElevation = 3.dp, modifier = Modifier.fillMaxWidth()) {
         Row(
@@ -168,6 +171,7 @@ private fun ViewerToolbar(
             TextButton(onClick = onZoomOut) { Text("−") }
             TextButton(onClick = onZoomIn) { Text("+") }
             TextButton(onClick = onFit) { Text("Fit") }
+            TextButton(onClick = onOrganize) { Text("Organize") }
         }
     }
 }

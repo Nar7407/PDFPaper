@@ -9,7 +9,7 @@ class TestObj(val num: Int, val gen: Int, val body: ByteArray) {
 }
 
 /** Classic xref table + trailer (§7.5.4-5), offsets computed for real. */
-fun buildTestPdf(objects: List<TestObj>, rootRef: String = "1 0 R"): ByteArray {
+fun buildTestPdf(objects: List<TestObj>, rootRef: String = "1 0 R", trailerExtra: String = ""): ByteArray {
     val out = ByteArrayOutputStream()
     fun write(s: String) = out.write(s.toByteArray(StandardCharsets.US_ASCII))
     write("%PDF-1.4\n")
@@ -33,7 +33,7 @@ fun buildTestPdf(objects: List<TestObj>, rootRef: String = "1 0 R"): ByteArray {
             write("%010d %05d n \n".format(off, gens[i]))
         }
     }
-    write("trailer\n<< /Size ${maxNum + 1} /Root $rootRef >>\n")
+    write("trailer\n<< /Size ${maxNum + 1} /Root $rootRef$trailerExtra >>\n")
     write("startxref\n$xrefAt\n%%EOF\n")
     return out.toByteArray()
 }
