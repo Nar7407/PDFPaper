@@ -89,3 +89,19 @@ data class PdfRef(val objNum: Int, val gen: Int) : PdfObject {
         }
     }
 }
+
+/**
+ * Inline image operand (ISO 32000-1, §8.9.7.3, Table 93): a synthesized
+ * operand that stands for one BI/ID/EI sequence — [dict] holds the BI
+ * entries, [data] the raw bytes captured between ID and EI. Filters are
+ * applied later (stored in the engine filter package); parsing keeps the
+ * bytes exact.
+ */
+class PdfInlineImage(val dict: PdfDict, val data: ByteArray) : PdfObject {
+    override fun equals(other: Any?): Boolean =
+        other is PdfInlineImage && dict == other.dict && data.contentEquals(other.data)
+
+    override fun hashCode(): Int = 31 * dict.hashCode() + data.contentHashCode()
+
+    override fun toString(): String = "PdfInlineImage(dict=$dict, ${data.size} bytes)"
+}

@@ -3,6 +3,7 @@ package com.pdfpaper.engine.xref
 import com.pdfpaper.engine.io.RandomAccessSource
 import java.io.Closeable
 import java.io.IOException
+import java.nio.charset.StandardCharsets
 
 /**
  * Reference to an indirect object, "<objNum> <gen> R" (ISO 32000-1, §7.3.10).
@@ -142,8 +143,39 @@ class PdfFile private constructor(
             val rebuilt = XRefParser.rebuildScan(source)
             if (rebuilt.isEmpty()) throw IOException("No cross-reference table and no objects found")
             val maxObj = rebuilt.keys.max()
-            val trailer = Trailer(maxObj + 1, null, null, emptyMap())
+            val trailer = Trailer(maxObj + 1, findCatalogRef(source, rebuilt), null, emptyMap())
             return PdfFile(header, trailer, rebuilt, true, source)
+        }
+
+        /** Cap on bytes read per object when hunting for the catalog after a rebuild. */
+        private const val CATALOG_WINDOW = 8192
+        private val CATALOG_PATTERN = Regex("(?i)/Type\\s*/Catalog")
+
+        /**
+         * /Root recovery for rebuilt files (§7.5.5): the scan produces no
+         * trailer, so search the recovered objects for the document catalog
+         * dictionary ("/Type /Catalog", §7.7.2; first match wins). Null when
+         * none exists — page tree navigation then reports zero pages.
+         */
+        private fun findCatalogRef(
+            source: RandomAccessSource,
+            entries: Map<Int, XRefEntry>
+        ): IndirectRef? {
+            for (num in entries.keys.sorted()) {
+                val entry = entries.getValue(num)
+                if (entry.kind != EntryKind.UNCOMPRESSED) continue
+                val len = minOf(source.size - entry.offset, CATALOG_WINDOW.toLong()).toInt()
+                if (len <= 0) continue
+                val head = try {
+                    source.read(entry.offset, len)
+                } catch (_: Exception) {
+                    continue
+                }
+                if (CATALOG_PATTERN.containsMatchIn(head.toString(StandardCharsets.ISO_8859_1))) {
+                    return IndirectRef(num, entry.gen)
+                }
+            }
+            return null
         }
 
         /** Walks the /Prev chain (§7.5.6); newer entries win. Null = latest section broken. */

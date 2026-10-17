@@ -5,6 +5,8 @@ import com.pdfpaper.engine.model.PdfDocument
 import com.pdfpaper.engine.model.PdfRef
 import com.pdfpaper.engine.model.PdfStream
 import com.pdfpaper.engine.filter.decoded
+import com.pdfpaper.engine.page.PageTreeResult
+import com.pdfpaper.engine.page.pageTree
 import java.io.File
 
 private data class FileResult(
@@ -14,6 +16,7 @@ private data class FileResult(
     val rebuilt: Boolean,
     val streamsTotal: Int,
     val streamsDecoded: Int,
+    val pages: Int,
     val reason: String
 )
 
@@ -36,18 +39,20 @@ fun main(args: Array<String>) {
     val okCount = results.count { it.ok }
     val streamsTotal = results.sumOf { it.streamsTotal }
     val streamsDecoded = results.sumOf { it.streamsDecoded }
+    val pagesTotal = results.sumOf { it.pages }
 
     val lines = buildList {
         add("PDFPaper corpus report")
         add("Engine: ${engineVersion()}")
         add("Directory: ${dir.absolutePath}")
         add("Total: ${results.size} files, $okCount opened OK, ${results.size - okCount} failed")
+        add("Pages: $pagesTotal")
         add("Streams: $streamsDecoded/$streamsTotal decoded")
         add("")
         for (r in results) {
             if (r.ok) {
                 val suffix = if (r.rebuilt) ", rebuilt from scan" else ""
-                add("[OK] ${r.name} (objects=${r.objects}$suffix) (streams=${r.streamsDecoded}/${r.streamsTotal} decoded)")
+                add("[OK] ${r.name} (objects=${r.objects}$suffix) (streams=${r.streamsDecoded}/${r.streamsTotal} decoded) (pages=${r.pages})")
             } else {
                 add("[FAIL] ${r.name}: ${r.reason}")
             }
@@ -55,7 +60,7 @@ fun main(args: Array<String>) {
     }
     reportFile.parentFile?.mkdirs()
     reportFile.writeText(lines.joinToString("\n") + "\n")
-    println(lines.take(5).joinToString("\n"))
+    println(lines.take(6).joinToString("\n"))
     println("Report: ${reportFile.absolutePath}")
 }
 
@@ -83,18 +88,23 @@ private fun checkOne(file: File): FileResult {
                             if (ok) decoded++
                         }
                     }
+                    val pages = try {
+                        (pageTree(it) as? PageTreeResult.Ok)?.pages?.size ?: 0
+                    } catch (t: Throwable) {
+                        0
+                    }
                     FileResult(
                         file.name, true, it.file.objectCount, it.file.rebuiltFromScan,
-                        total, decoded, ""
+                        total, decoded, pages, ""
                     )
                 }
             },
             onFailure = { e ->
-                FileResult(file.name, false, 0, false, 0, 0, shortReason(e))
+                FileResult(file.name, false, 0, false, 0, 0, 0, shortReason(e))
             }
         )
     } catch (t: Throwable) {
-        FileResult(file.name, false, 0, false, 0, 0, shortReason(t))
+        FileResult(file.name, false, 0, false, 0, 0, 0, shortReason(t))
     }
 }
 

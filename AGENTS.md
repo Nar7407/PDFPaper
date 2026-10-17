@@ -35,10 +35,10 @@ for touch. Do not copy PdfCraft/ArtCraft code, logos or branding.
 
 ## Current status
 (Updated at the end of every session. Newest at the top.)
-- Last session: 2026-10-16 — T5 done. :engine filters (ASCIIHex/ASCII85/Flate+LZW/RunLength, chains, PNG+TIFF predictors, tolerant corrupt handling); 27 new tests (64 total), corpus 10/10 + streams 1/1, build green.
-- Done: T0, T1, T2, T3, T4, T5
+- Last session: 2026-10-17 — T6 done. :engine page tree (nested trees, inheritance, tolerant traversal) + content-stream parser with inline images; 28 new tests (92 total), corpus 10/10 with page counts (12 pages), build green.
+- Done: T0, T1, T2, T3, T4, T5, T6
 - Broken / known issues: none yet
-- Next task: T6
+- Next task: T7
 
 ## Milestone checklist
 - [x] T0  Project skeleton compiles
@@ -47,7 +47,7 @@ for touch. Do not copy PdfCraft/ArtCraft code, logos or branding.
 - [x] T3  Engine: corpus test harness
 - [x] T4  Engine: object model + streams
 - [x] T5  Engine: filters (Flate, ASCIIHex, ASCII85, LZW, RunLength)
-- [ ] T6  Engine: page tree + content streams
+- [x] T6  Engine: page tree + content streams
 - [ ] T7  Engine: fonts + text
 - [ ] T8  Engine: graphics + images
 - [ ] T9  Rendering to bitmap + viewer in app
@@ -69,9 +69,12 @@ for touch. Do not copy PdfCraft/ArtCraft code, logos or branding.
 - 2026-10-16 (T3 fix): .gitattributes marks *.pdf/*.jar/*.bin binary; git had normalized crlf-endings.pdf CRLF->LF on add (329 vs 346 bytes), re-added byte-exact.
 - 2026-10-16 (T4): no new dependencies. PdfDocument caches resolved objects (incl. misses); cycles resolve to null. Filtered object streams resolve to null until T5. Stream data tokens are skipped by byte position after parsing; stray ')'/lone '>' tokenize as words so binary stream data survives tokenizing.
 - 2026-10-16 (T5): no new dependencies (JDK java.util.zip for Flate). Decode is lazy (streams stay encoded until decoded()) with a 256 MB output guard. Corrupt input returns the decoded prefix + warnings, never throws. LZW width rule verified against the PDFBox reference: decoder bumps on table-size + EarlyChange, encoder one entry earlier; PNG rows always carry a filter-type byte for predictors 10-15; predictors support 8 BPC only.
+- 2026-10-17 (T6): no new dependencies. Page tree traversal is purely walk-based (/Count is ignored), so missing or wrong counts never matter. Content streams get their own lazy tokenizer (a whole-file tokenizer cannot survive binary inline-image data); BI/ID/EI collapse into one "ID" command holding a PdfInlineImage. PdfInlineImage lives in the model package because the sealed PdfObject hierarchy only admits same-package inheritors. Rebuilt files (broken/missing xref) recover /Root by scanning for "/Type /Catalog"; resolveRoot now uses the typed trailer root so recovery applies everywhere. Inline images keep exactly one whitespace byte as delimiter after ID and one before EI (byte-exact data capture).
 
 ## Test corpus
 Folder: /testdata (real-world PDFs). Metric: files that open without crash / total.
-Current result: 10/10 (2026-10-16, all self-made; 3 opened via rebuild scan).
+Current result: 10/10 (2026-10-17, all self-made; 3 opened via rebuild scan).
+Pages: 12 total (every file reports its page count; rebuilt files found
+their catalog via the rebuild /Root recovery).
 Streams decoded: 1/1 (only content-reachable streams are indexed; the
 unfiltered xref-stream object itself is not in any xref table).

@@ -53,10 +53,11 @@ class PdfDocument private constructor(val file: PdfFile) : Closeable {
         return current
     }
 
-    /** Catalog object from the trailer /Root, or null. */
+    /** Catalog object from the trailer /Root (§7.5.5), or null. Rebuilt files
+     *  get a recovered /Root via [PdfFile] (catalog scan). */
     fun resolveRoot(): PdfObject? {
-        val root = file.trailer.raw["Root"]?.let { PdfRef.parse(it) } ?: return null
-        return resolve(root)
+        val root = file.trailer.root ?: return null
+        return resolve(PdfRef(root.objNum, root.gen))
     }
 
     private fun storeNull(objNum: Int): PdfObject? {
