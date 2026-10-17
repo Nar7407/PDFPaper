@@ -26,7 +26,22 @@ class PdfTextRun(
     val x0: Double,
     val y0: Double,
     val x1: Double,
-    val y1: Double
+    val y1: Double,
+    /**
+     * Baseline start/end in page space, i.e. the text origin and origin +
+     * advance mapped through (CTM ∘ Tm) (§9.4.4). The renderer uses the
+     * direction start→end for the glyph rotation and the bbox for hit tests.
+     */
+    val originX: Double = x0,
+    val originY: Double = y0,
+    val endX: Double = x1,
+    val endY: Double = y1,
+    /** Embedded font program for rendering (§9.8), or null → system font. */
+    val fontProgram: ByteArray? = null,
+    /** "truetype" | "opentype" | "cff" | "type1" when [fontProgram] is set. */
+    val fontFormat: String? = null,
+    /** Text rendering mode from Tr (§9.3.6); 3 = invisible, 7 = add to clip. */
+    val renderMode: Int = 0
 ) {
     override fun toString(): String =
         "PdfTextRun(\"$text\", size=$fontSize, [$x0,$y0 → $x1,$y1])"
@@ -95,7 +110,8 @@ class TextStateSnapshot internal constructor(
     internal val charSpace: Double,
     internal val wordSpace: Double,
     internal val scale: Double,
-    internal val rise: Double
+    internal val rise: Double,
+    internal val renderMode: Int
 )
 
 /**
@@ -119,9 +135,12 @@ class TextMachine(
     private var scale = 100.0
     private var rise = 0.0
 
+    /** Text rendering mode from Tr (§9.3.6); 3 = invisible, 7 = clip. */
+    private var renderMode = 0
+
     /** Current text state for q. */
     fun snapshot(): TextStateSnapshot =
-        TextStateSnapshot(lineMat, textMat, font, fontSize, leading, charSpace, wordSpace, scale, rise)
+        TextStateSnapshot(lineMat, textMat, font, fontSize, leading, charSpace, wordSpace, scale, rise, renderMode)
 
     /** Restores the text state saved by [snapshot] for Q. */
     fun restore(snapshot: TextStateSnapshot) {
@@ -134,6 +153,7 @@ class TextMachine(
         wordSpace = snapshot.wordSpace
         scale = snapshot.scale
         rise = snapshot.rise
+        renderMode = snapshot.renderMode
     }
 
     /**
@@ -162,7 +182,7 @@ class TextMachine(
             "Tz" -> number(ops.getOrNull(0))?.let { scale = it }
             "TL" -> number(ops.getOrNull(0))?.let { leading = it }
             "Ts" -> number(ops.getOrNull(0))?.let { rise = it }
-            "Tr" -> {} // rendering mode: ignored by text extraction
+            "Tr" -> number(ops.getOrNull(0))?.let { renderMode = it.toInt() }
 
             // --- text positioning (§9.4.4, Table 108) ------------------
             "Td" -> {
@@ -278,7 +298,14 @@ class TextMachine(
             text = sb.toString(),
             fontSize = fontSize,
             fontName = activeFont.name,
-            x0 = xs.min(), y0 = ys.min(), x1 = xs.max(), y1 = ys.max()
+            x0 = xs.min(), y0 = ys.min(), x1 = xs.max(), y1 = ys.max(),
+            originX = full.apply(0.0, rise)[0],
+            originY = full.apply(0.0, rise)[1],
+            endX = full.apply(advance, rise)[0],
+            endY = full.apply(advance, rise)[1],
+            fontProgram = activeFont.embeddedProgram,
+            fontFormat = activeFont.embeddedFormat,
+            renderMode = renderMode
         )
     }
 

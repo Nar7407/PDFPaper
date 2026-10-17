@@ -29,6 +29,17 @@ sealed interface PdfFont {
 
     /** True when something was unrecoverable (never fatal, extraction continues). */
     val degraded: Boolean
+
+    /**
+     * Embedded font program bytes (/FontFile, /FontFile2, /FontFile3, §9.8)
+     * already decoded, or null when the font is not embedded. Rendering uses
+     * these when the platform can load the format (T9), otherwise a system
+     * font stands in.
+     */
+    val embeddedProgram: ByteArray? get() = null
+
+    /** What [embeddedProgram] holds: "truetype", "opentype", "cff" or "type1". */
+    val embeddedFormat: String? get() = null
 }
 
 /** Simple one-byte-code font (§9.6): Type1, TrueType, Type3, MMType1, ... */
@@ -38,7 +49,9 @@ class PdfSimpleFont internal constructor(
     private val differences: Map<Int, String>,
     private val base: Encodings.Base?,
     private val widths1000: Map<Int, Long>,
-    override val degraded: Boolean
+    override val degraded: Boolean,
+    override val embeddedProgram: ByteArray? = null,
+    override val embeddedFormat: String? = null
 ) : PdfFont {
 
     /** Unicode for a single-byte code; never null, unknown codes yield "". */
@@ -65,7 +78,9 @@ class PdfType0Font internal constructor(
     private val defaultWidth1000: Long,
     /** True when the predefined CMap is not one we implement. */
     val unsupportedEncoding: Boolean,
-    override val degraded: Boolean
+    override val degraded: Boolean,
+    override val embeddedProgram: ByteArray? = null,
+    override val embeddedFormat: String? = null
 ) : PdfFont {
 
     /** Splits a string operand into CIDs (two bytes each, big-endian, §9.7.5.2). */
@@ -126,10 +141,46 @@ object FontResolver {
         return when (subtype) {
             "Type0" -> type0Font(dict, baseFontName, toUnicode, doc)
             "Type1", "Type3", "TrueType", "MMType1", "CIDFontType0", "CIDFontType2",
-            null -> simpleFont(dict, baseFontName, toUnicode, subtype)
-            else -> simpleFont(dict, baseFontName, toUnicode, subtype) // tolerance: unknown subtype → simple
+            null -> simpleFont(dict, baseFontName, toUnicode, subtype, loadEmbedded(dict, doc))
+            else -> simpleFont(dict, baseFontName, toUnicode, subtype, loadEmbedded(dict, doc))
         }
     }
+
+    /**
+     * Embedded font program from the font descriptor (§9.8): /FontFile2
+     * (TrueType), /FontFile3 (Type1C/CIDFontType0C/OpenType) or /FontFile
+     * (Type1). Returns the decoded bytes plus the format tag, or null.
+     */
+    private fun loadEmbedded(owner: PdfDict, doc: PdfDocument): Pair<ByteArray, String>? {
+        val descriptor = asDict(owner["FontDescriptor"], doc) ?: return null
+        asStream(descriptor["FontFile2"], doc)?.let { stream ->
+            return streamBytes(stream, doc)?.let { bytes -> bytes to "truetype" }
+        }
+        asStream(descriptor["FontFile3"], doc)?.let { stream ->
+            val subtype = (stream.dict["Subtype"] as? PdfName)?.name
+            val format = if (subtype == "OpenType") "opentype" else "cff" // Type1C / CIDFontType0C
+            return streamBytes(stream, doc)?.let { bytes -> bytes to format }
+        }
+        asStream(descriptor["FontFile"], doc)?.let { stream ->
+            return streamBytes(stream, doc)?.let { bytes -> bytes to "type1" }
+        }
+        return null
+    }
+
+    private fun asDict(obj: PdfObject?, doc: PdfDocument): PdfDict? = when (obj) {
+        is PdfDict -> obj
+        is PdfRef -> doc.resolve(obj) as? PdfDict
+        else -> null
+    }
+
+    private fun asStream(obj: PdfObject?, doc: PdfDocument): PdfStream? = when (obj) {
+        is PdfStream -> obj
+        is PdfRef -> doc.resolve(obj) as? PdfStream
+        else -> null
+    }
+
+    private fun streamBytes(stream: PdfStream, doc: PdfDocument): ByteArray? =
+        stream.decoded { doc.resolve(it) }.getOrNull()?.bytes
 
     /** "ABCDEF+Calibri" / "AAAAAA+Arial-BoldMT" → "Calibri" / "Arial-BoldMT"? */
     private fun unescapeSubsetPrefix(name: String): String {
@@ -153,7 +204,8 @@ object FontResolver {
         dict: PdfDict,
         baseFontName: String?,
         toUnicode: Map<Int, String>?,
-        subtype: String?
+        subtype: String?,
+        embedded: Pair<ByteArray, String>?
     ): PdfSimpleFont {
         var degraded = false
 
@@ -205,7 +257,9 @@ object FontResolver {
             differences = differences,
             base = base,
             widths1000 = widths,
-            degraded = degraded
+            degraded = degraded,
+            embeddedProgram = embedded?.first,
+            embeddedFormat = embedded?.second
         )
     }
 
@@ -257,6 +311,7 @@ object FontResolver {
         }
         val dw = descendant?.let { toDouble(it["DW"])?.toLong() } ?: 1000L // §9.7.4.1 default 1000
 
+        val embedded = descendant?.let { loadEmbedded(it, doc) }
         return PdfType0Font(
             name = baseFontName,
             encodingName = encodingName,
@@ -264,7 +319,9 @@ object FontResolver {
             widths1000 = widths,
             defaultWidth1000 = if (dw in 0..1_000_000) dw else 1000L,
             unsupportedEncoding = unsupported,
-            degraded = descendant == null
+            degraded = descendant == null,
+            embeddedProgram = embedded?.first,
+            embeddedFormat = embedded?.second
         )
     }
 

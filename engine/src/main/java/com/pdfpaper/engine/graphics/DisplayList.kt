@@ -21,6 +21,12 @@ class SaveGraphicsState(matrix: PdfMatrix, val blendMode: String? = null) : Draw
 /** `Q` (§8.4.4). */
 class RestoreGraphicsState(matrix: PdfMatrix) : DrawCommand(matrix)
 
+/**
+ * ExtGState /BM (§11.6.3, §11.4.5): a constant blend mode applying from here
+ * until the enclosing Q. [mode] is "Normal", "Multiply", "Screen", ... .
+ */
+class SetBlendMode(val mode: String, matrix: PdfMatrix) : DrawCommand(matrix)
+
 /** `W`/`W*` (§8.5.4): intersect the clip with [path]. */
 class ClipPath(
     val path: PdfPath,

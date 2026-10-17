@@ -300,7 +300,14 @@ internal class DisplayListBuilder(
                 // --- extended graphics state (§8.4.5) -----------------------
                 "gs" -> {
                     val name = (ops.getOrNull(0) as? PdfName)?.name
-                    if (name != null) applyExtGState(name, resources, state) else warnOnce("gs-noname", "gs without a name")
+                    if (name != null) {
+                        val blend = applyExtGState(name, resources, state)
+                        // /BM takes effect from here, not only at the next q,
+                        // so it goes out as its own command (§11.6.3).
+                        if (blend != null) commands += SetBlendMode(blend, state.ctm)
+                    } else {
+                        warnOnce("gs-noname", "gs without a name")
+                    }
                 }
 
                 // --- external objects (§8.8-8.10) ---------------------------
@@ -324,15 +331,20 @@ internal class DisplayListBuilder(
         currentResources = previousResources
     }
 
-    /** /ExtGState entries that affect painting (§8.4.5, Table 58). */
-    private fun applyExtGState(name: String, resources: PdfDict?, state: GraphicsState) {
+    /**
+     * /ExtGState entries that affect painting (§8.4.5, Table 58).
+     * Returns the blend mode when the entry changed it, so the caller can emit
+     * a [SetBlendMode] command; null when there was no /BM.
+     */
+    private fun applyExtGState(name: String, resources: PdfDict?, state: GraphicsState): String? {
         val dict = dictEntry(resources, "ExtGState", name) ?: run {
             warnOnce("extgstate-$name", "ExtGState '/$name' not found in resources")
-            return
+            return null
         }
         toDouble(dict["ca"])?.let { alpha -> state.fillAlpha = alpha.coerceIn(0.0, 1.0) }
         toDouble(dict["CA"])?.let { alpha -> state.strokeAlpha = alpha.coerceIn(0.0, 1.0) }
-        (dict["BM"] as? PdfName)?.name?.let { mode -> state.blendMode = mode }
+        val blend = (dict["BM"] as? PdfName)?.name
+        if (blend != null) state.blendMode = blend
         toDouble(dict["LW"])?.let { width -> state.lineStyle = state.lineStyle.copy(width = width) }
         toDouble(dict["LC"])?.let { cap -> state.lineStyle = state.lineStyle.copy(cap = cap.toInt()) }
         toDouble(dict["LJ"])?.let { join -> state.lineStyle = state.lineStyle.copy(join = join.toInt()) }
@@ -350,6 +362,7 @@ internal class DisplayListBuilder(
         }
         if (dict["SMask"] != null) warnOnce("extgstate-smask", "ExtGState /SMask (transparency group) is not supported yet")
         if (dict["Font"] != null) warnOnce("extgstate-font", "ExtGState /Font is ignored (text state comes from Tf)")
+        return blend
     }
 
     private fun drawXObject(name: String, resources: PdfDict?, state: GraphicsState, depth: Int) {
