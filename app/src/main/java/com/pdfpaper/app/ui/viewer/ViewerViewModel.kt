@@ -2,9 +2,16 @@ package com.pdfpaper.app.ui.viewer
 
 import android.app.Application
 import android.graphics.Bitmap
+import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.pdfpaper.app.render.PageBitmapRenderer
+import com.pdfpaper.engine.annot.AnnotationSpec
+import com.pdfpaper.engine.annot.InkSpec
+import com.pdfpaper.engine.annot.NoteSpec
+import com.pdfpaper.engine.form.FieldKind
+import com.pdfpaper.engine.form.PdfField
+import com.pdfpaper.engine.form.formFields
 import com.pdfpaper.engine.io.FileSource
 import com.pdfpaper.engine.model.PdfDocument
 import com.pdfpaper.engine.page.PdfPage
@@ -17,6 +24,7 @@ import com.pdfpaper.engine.text.PageMatch
 import com.pdfpaper.engine.text.TextRect
 import com.pdfpaper.engine.text.layout
 import com.pdfpaper.engine.util.LruCache
+import com.pdfpaper.engine.write.PdfPageOps
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -30,6 +38,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.io.IOException
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
@@ -59,6 +68,29 @@ data class ViewerSelection(
     val rects: List<TextRect>,
     val text: String
 )
+
+/** Annotation tool selected in the viewer's edit mode (T12). */
+enum class AnnotationTool { HIGHLIGHT, INK, NOTE }
+
+/** A freehand stroke still being drawn, in page user space. */
+data class InkDraft(val pageIndex: Int, val points: List<Double>)
+
+/** Output bytes waiting for the user to choose a destination (SAF CreateDocument). */
+class ViewerExport(val bytes: ByteArray, val suggestedName: String)
+
+/** Viewer edit mode: pending annotations, form fields and their new values (T12). */
+data class ViewerEditState(
+    val active: Boolean = false,
+    val tool: AnnotationTool = AnnotationTool.HIGHLIGHT,
+    val annotations: List<AnnotationSpec> = emptyList(),
+    val inkDraft: InkDraft? = null,
+    val fields: List<PdfField> = emptyList(),
+    val fieldValues: Map<String, String> = emptyMap(),
+    val loadingFields: Boolean = false,
+    val saving: Boolean = false
+) {
+    val hasPendingChanges: Boolean get() = annotations.isNotEmpty() || fieldValues.isNotEmpty()
+}
 
 /** One cached page bitmap plus the render plan that produced it. */
 private class CachedPage(val plan: PageRenderPlan, val bitmap: Bitmap)
@@ -99,12 +131,21 @@ class ViewerViewModel(application: Application) : AndroidViewModel(application) 
     private val _selection = MutableStateFlow<ViewerSelection?>(null)
     val selection: StateFlow<ViewerSelection?> = _selection.asStateFlow()
 
+    /** Annotation/form edit mode (T12). */
+    private val _edit = MutableStateFlow(ViewerEditState())
+    val edit: StateFlow<ViewerEditState> = _edit.asStateFlow()
+
+    /** Bytes produced by [save], waiting for a SAF destination. */
+    private val _export = MutableStateFlow<ViewerExport?>(null)
+    val export: StateFlow<ViewerExport?> = _export.asStateFlow()
+
     /** Non-fatal problem worth showing (render failure, warning summary). */
     private val _message = MutableStateFlow<String?>(null)
     val message: StateFlow<String?> = _message.asStateFlow()
 
     private var document: PdfDocument? = null
     private var pages: List<PdfPage> = emptyList()
+    private var fieldsLoaded = false
 
     private val cache = LruCache<Int, CachedPage>(bitmapBudgetBytes()) { it.bitmap.allocationByteCount.toLong() }
 
@@ -315,6 +356,163 @@ class ViewerViewModel(application: Application) : AndroidViewModel(application) 
         _selection.value = null
     }
 
+    // -------------------------------------------------- annotations (T12)
+
+    /** Turns edit mode on/off; entering it lazily loads the form fields. */
+    fun setEditMode(active: Boolean) {
+        _edit.update { it.copy(active = active, inkDraft = if (active) it.inkDraft else null) }
+        if (active) ensureFieldsLoaded()
+    }
+
+    fun setTool(tool: AnnotationTool) = _edit.update { it.copy(tool = tool) }
+
+    /** Turns the current selection into a highlight annotation, then clears it. */
+    fun highlightSelection() {
+        val current = _selection.value ?: return
+        val spec = selectionToHighlight(current) ?: return
+        _edit.update { it.copy(annotations = it.annotations + spec) }
+        clearSelection()
+    }
+
+    fun startInk(pageIndex: Int, fractionX: Float, fractionY: Float) {
+        val point = toUserSpace(pageIndex, fractionX, fractionY) ?: return
+        _edit.update { it.copy(inkDraft = InkDraft(pageIndex, listOf(point[0], point[1]))) }
+    }
+
+    fun extendInk(fractionX: Float, fractionY: Float) {
+        val draft = _edit.value.inkDraft ?: return
+        val point = toUserSpace(draft.pageIndex, fractionX, fractionY) ?: return
+        if (draft.points.size >= 2) {
+            val lastX = draft.points[draft.points.size - 2]
+            val lastY = draft.points[draft.points.size - 1]
+            val dx = point[0] - lastX
+            val dy = point[1] - lastY
+            if (dx * dx + dy * dy < 1.0) return // ignore sub-point jitter
+        }
+        _edit.update { it.copy(inkDraft = draft.copy(points = draft.points + listOf(point[0], point[1]))) }
+    }
+
+    fun finishInk() {
+        val draft = _edit.value.inkDraft ?: return
+        if (draft.points.size >= 4) {
+            _edit.update {
+                it.copy(
+                    annotations = it.annotations + InkSpec(draft.pageIndex, listOf(draft.points)),
+                    inkDraft = null
+                )
+            }
+        } else {
+            _edit.update { it.copy(inkDraft = null) }
+        }
+    }
+
+    /** Adds a sticky note of [text] at the tapped point (page user space). */
+    fun addNote(pageIndex: Int, fractionX: Float, fractionY: Float, text: String, title: String? = null) {
+        if (text.isBlank()) return
+        val point = toUserSpace(pageIndex, fractionX, fractionY) ?: return
+        val rect = noteRectAt(point[0], point[1], NOTE_SIZE)
+        _edit.update {
+            it.copy(annotations = it.annotations + NoteSpec(pageIndex, rect, text.trim(), title = title))
+        }
+    }
+
+    fun undoAnnotation() = _edit.update {
+        it.copy(annotations = it.annotations.dropLast(1), inkDraft = null)
+    }
+
+    fun clearAnnotations() = _edit.update { it.copy(annotations = emptyList(), inkDraft = null) }
+
+    // --------------------------------------------------------- forms (T12)
+
+    fun setFieldValue(name: String, value: String) = _edit.update {
+        it.copy(fieldValues = it.fieldValues + (name to value))
+    }
+
+    private fun ensureFieldsLoaded() {
+        if (fieldsLoaded) return
+        fieldsLoaded = true
+        _edit.update { it.copy(loadingFields = true) }
+        textScope.launch {
+            val fields = runCatching { document?.formFields() ?: emptyList() }.getOrDefault(emptyList())
+            if (!isActive) return@launch
+            _edit.update { it.copy(fields = fields, loadingFields = false) }
+        }
+    }
+
+    // ---------------------------------------------------------- saving (T12)
+
+    /**
+     * Builds a new PDF with the pending annotations and field values and parks
+     * it in [export] for the UI to write through SAF. Document access stays on
+     * the shared document dispatcher.
+     */
+    fun save() {
+        val doc = document ?: return
+        val current = _edit.value
+        if (!current.hasPendingChanges) {
+            _message.value = "Nothing to save yet"
+            return
+        }
+        _edit.update { it.copy(saving = true) }
+        textScope.launch {
+            val result = runCatching {
+                PdfPageOps.edit(doc, current.annotations, current.fieldValues).getOrThrow()
+            }
+            if (!isActive) return@launch
+            result.fold(
+                onSuccess = { bytes ->
+                    _edit.update { it.copy(saving = false) }
+                    _export.value = ViewerExport(bytes, suggestedName())
+                },
+                onFailure = { error ->
+                    _edit.update { it.copy(saving = false) }
+                    _message.value = error.message ?: "Save failed"
+                }
+            )
+        }
+    }
+
+    /** Writes the pending export to the user-chosen [uri]. */
+    fun completeExport(uri: Uri) {
+        val pending = _export.value ?: return
+        _export.value = null
+        _edit.update { it.copy(saving = true) }
+        viewModelScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching {
+                    val resolver = getApplication<Application>().contentResolver
+                    resolver.openOutputStream(uri)?.use { it.write(pending.bytes) }
+                        ?: throw IOException("Could not open the destination for writing")
+                }
+            }
+            result.fold(
+                onSuccess = {
+                    _edit.update { it.copy(saving = false, annotations = emptyList(), fieldValues = emptyMap()) }
+                    _message.value = "Saved"
+                },
+                onFailure = { error ->
+                    _edit.update { it.copy(saving = false) }
+                    _message.value = error.message ?: "Save failed"
+                }
+            )
+        }
+    }
+
+    fun cancelExport() {
+        _export.value = null
+    }
+
+    /** Maps a fractional page point to PDF user space through the render plan. */
+    private fun toUserSpace(pageIndex: Int, fractionX: Float, fractionY: Float): DoubleArray? {
+        val plan = _plans.value[pageIndex] ?: return null
+        return pageFractionToUserSpace(plan, fractionX, fractionY)
+    }
+
+    private fun suggestedName(): String {
+        val base = (_state.value.displayName ?: "document.pdf").substringBeforeLast('.')
+        return "$base-annotated.pdf"
+    }
+
     fun dismissMessage() {
         _message.value = null
     }
@@ -326,6 +524,8 @@ class ViewerViewModel(application: Application) : AndroidViewModel(application) 
         _bitmaps.value = emptyMap()
         _plans.value = emptyMap()
         _selection.value = null
+        _edit.value = ViewerEditState()
+        _export.value = null
         cache.clear()
         layouts.clear()
         document?.close()
@@ -351,6 +551,9 @@ class ViewerViewModel(application: Application) : AndroidViewModel(application) 
         _selection.value = null
         selectionAnchor = null
         layouts.clear()
+        fieldsLoaded = false
+        _edit.value = ViewerEditState()
+        _export.value = null
     }
 
     private fun publish(index: Int, plan: PageRenderPlan, bitmap: Bitmap) {
@@ -365,6 +568,9 @@ class ViewerViewModel(application: Application) : AndroidViewModel(application) 
     private companion object {
         /** Upper bound on search hits kept for one query. */
         const val MAX_MATCHES: Int = 1000
+
+        /** Default size, in points, of a newly placed sticky note (T12). */
+        const val NOTE_SIZE: Double = 20.0
 
         /**
          * Bitmap budget: a sixth of the heap, clamped to 16..64 MB. Together

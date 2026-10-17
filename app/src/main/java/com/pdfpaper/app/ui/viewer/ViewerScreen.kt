@@ -1,6 +1,8 @@
 package com.pdfpaper.app.ui.viewer
 
 import android.graphics.Bitmap
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -16,6 +18,7 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -23,9 +26,12 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
@@ -49,6 +55,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalClipboardManager
@@ -58,10 +65,18 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.pdfpaper.engine.annot.AnnotationSpec
+import com.pdfpaper.engine.annot.HighlightSpec
+import com.pdfpaper.engine.annot.InkSpec
+import com.pdfpaper.engine.annot.NoteSpec
+import com.pdfpaper.engine.form.FieldKind
+import com.pdfpaper.engine.form.PdfField
+import com.pdfpaper.engine.geom.PdfRect
 import com.pdfpaper.engine.render.PageBox
 import com.pdfpaper.engine.render.PageRenderPlan
 import com.pdfpaper.engine.text.TextRect
 import kotlinx.coroutines.delay
+import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
@@ -90,11 +105,16 @@ fun ViewerScreen(
     val plans by viewModel.plans.collectAsState()
     val search by viewModel.search.collectAsState()
     val selection by viewModel.selection.collectAsState()
+    val edit by viewModel.edit.collectAsState()
+    val export by viewModel.export.collectAsState()
     val message by viewModel.message.collectAsState()
 
     var zoom by rememberSaveable { mutableFloatStateOf(1f) }
     var showSearch by rememberSaveable { mutableStateOf(false) }
     var query by rememberSaveable { mutableStateOf("") }
+    var showForms by rememberSaveable { mutableStateOf(false) }
+    var noteTarget by remember { mutableStateOf<Triple<Int, Float, Float>?>(null) }
+
     val density = LocalDensity.current
     val screenWidthDp = LocalConfiguration.current.screenWidthDp
     val screenWidthPx = with(density) { screenWidthDp.dp.toPx() }
@@ -107,6 +127,12 @@ fun ViewerScreen(
     val hScroll = rememberScrollState()
     val snackbar = remember { SnackbarHostState() }
     val clipboard = LocalClipboardManager.current
+
+    val createDocument = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/pdf")
+    ) { uri ->
+        if (uri != null) viewModel.completeExport(uri) else viewModel.cancelExport()
+    }
 
     LaunchedEffect(path) { viewModel.load(path) }
     LaunchedEffect(message) {
@@ -124,6 +150,11 @@ fun ViewerScreen(
         delay(250)
         viewModel.setSearchQuery(query)
     }
+    // Ask for a destination once the engine has produced the new bytes (T12).
+    LaunchedEffect(export) {
+        val pending = export ?: return@LaunchedEffect
+        createDocument.launch(pending.suggestedName)
+    }
     // Jump to whichever match is active.
     val activeMatch = search.activeMatch
     LaunchedEffect(activeMatch) {
@@ -137,12 +168,38 @@ fun ViewerScreen(
                 pageLabel = if (state.pageCount > 0) "${state.pageCount} pages" else null,
                 zoom = zoom,
                 findActive = showSearch,
+                editActive = edit.active,
                 onZoomIn = { zoom = (zoom * 1.25f).coerceAtMost(MAX_ZOOM) },
                 onZoomOut = { zoom = (zoom / 1.25f).coerceAtLeast(MIN_ZOOM) },
                 onFit = { zoom = 1f },
                 onFind = { showSearch = !showSearch },
+                onEdit = { viewModel.setEditMode(!edit.active) },
                 onOrganize = { onOrganize(path) }
             )
+
+            if (edit.active) {
+                EditBar(
+                    tool = edit.tool,
+                    annotationCount = edit.annotations.size,
+                    fieldCount = edit.fields.size,
+                    showForms = showForms,
+                    saving = edit.saving,
+                    hasChanges = edit.hasPendingChanges,
+                    onTool = viewModel::setTool,
+                    onUndo = viewModel::undoAnnotation,
+                    onClear = viewModel::clearAnnotations,
+                    onSave = viewModel::save,
+                    onToggleForms = { showForms = !showForms }
+                )
+                if (showForms) {
+                    FormPanel(
+                        fields = edit.fields,
+                        values = edit.fieldValues,
+                        loading = edit.loadingFields,
+                        onValue = viewModel::setFieldValue
+                    )
+                }
+            }
 
             if (showSearch) {
                 SearchRow(
@@ -182,6 +239,10 @@ fun ViewerScreen(
                                 }
                                 val selectionRects = selection?.takeIf { it.pageIndex == index }?.rects
                                     ?: emptyList()
+                                val pageAnnotations = remember(edit.annotations, index) {
+                                    edit.annotations.filter { it.pageIndex == index }
+                                }
+                                val inkDraft = edit.inkDraft?.takeIf { it.pageIndex == index }
                                 PageItem(
                                     index = index,
                                     box = boxes.getOrNull(index),
@@ -189,10 +250,17 @@ fun ViewerScreen(
                                     plan = plans[index],
                                     searchRects = searchRects,
                                     selectionRects = selectionRects,
+                                    editTool = if (edit.active) edit.tool else null,
+                                    annotations = pageAnnotations,
+                                    inkDraft = inkDraft,
                                     targetPixelWidth = (screenWidthPx * renderZoom).roundToInt(),
                                     onVisible = viewModel::onPageVisible,
                                     onHidden = viewModel::onPageHidden,
-                                    onSelect = viewModel::selectAt
+                                    onSelect = viewModel::selectAt,
+                                    onInkStart = viewModel::startInk,
+                                    onInkExtend = viewModel::extendInk,
+                                    onInkEnd = viewModel::finishInk,
+                                    onNoteTap = { i, fx, fy -> noteTarget = Triple(i, fx, fy) }
                                 )
                             }
                         }
@@ -208,12 +276,25 @@ fun ViewerScreen(
             if (current != null) {
                 SelectionBar(
                     text = current.text,
+                    allowHighlight = edit.active,
+                    onHighlight = viewModel::highlightSelection,
                     onCopy = { clipboard.setText(AnnotatedString(current.text)) },
                     onSelectAll = { viewModel.selectAll(current.pageIndex) },
                     onClear = viewModel::clearSelection
                 )
             }
         }
+    }
+
+    val target = noteTarget
+    if (target != null) {
+        NoteDialog(
+            onDismiss = { noteTarget = null },
+            onConfirm = { text ->
+                viewModel.addNote(target.first, target.second, target.third, text)
+                noteTarget = null
+            }
+        )
     }
 }
 
@@ -223,10 +304,12 @@ private fun ViewerToolbar(
     pageLabel: String?,
     zoom: Float,
     findActive: Boolean,
+    editActive: Boolean,
     onZoomIn: () -> Unit,
     onZoomOut: () -> Unit,
     onFit: () -> Unit,
     onFind: () -> Unit,
+    onEdit: () -> Unit,
     onOrganize: () -> Unit
 ) {
     Surface(tonalElevation = 3.dp, modifier = Modifier.fillMaxWidth()) {
@@ -245,9 +328,166 @@ private fun ViewerToolbar(
             TextButton(onClick = onZoomIn) { Text("+") }
             TextButton(onClick = onFit) { Text("Fit") }
             TextButton(onClick = onFind) { Text(if (findActive) "Close" else "Find") }
+            TextButton(onClick = onEdit) { Text(if (editActive) "Done" else "Annotate") }
             TextButton(onClick = onOrganize) { Text("Organize") }
         }
     }
+}
+
+@Composable
+private fun EditBar(
+    tool: AnnotationTool,
+    annotationCount: Int,
+    fieldCount: Int,
+    showForms: Boolean,
+    saving: Boolean,
+    hasChanges: Boolean,
+    onTool: (AnnotationTool) -> Unit,
+    onUndo: () -> Unit,
+    onClear: () -> Unit,
+    onSave: () -> Unit,
+    onToggleForms: () -> Unit
+) {
+    Surface(tonalElevation = 2.dp, modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            ToolButton("Highlight", tool == AnnotationTool.HIGHLIGHT) { onTool(AnnotationTool.HIGHLIGHT) }
+            ToolButton("Ink", tool == AnnotationTool.INK) { onTool(AnnotationTool.INK) }
+            ToolButton("Note", tool == AnnotationTool.NOTE) { onTool(AnnotationTool.NOTE) }
+            Text("$annotationCount", style = MaterialTheme.typography.labelLarge)
+            TextButton(onClick = onUndo, enabled = annotationCount > 0) { Text("Undo") }
+            TextButton(onClick = onClear, enabled = annotationCount > 0) { Text("Clear") }
+            if (fieldCount > 0) {
+                TextButton(onClick = onToggleForms) {
+                    Text(if (showForms) "Hide fields" else "Fields ($fieldCount)")
+                }
+            }
+            TextButton(onClick = onSave, enabled = hasChanges && !saving) {
+                Text(if (saving) "Saving…" else "Save")
+            }
+        }
+    }
+}
+
+@Composable
+private fun ToolButton(label: String, selected: Boolean, onClick: () -> Unit) {
+    if (selected) {
+        TextButton(onClick = onClick) {
+            Text(label, color = MaterialTheme.colorScheme.primary)
+        }
+    } else {
+        TextButton(onClick = onClick) { Text(label) }
+    }
+}
+
+/** Editors for every AcroForm field (T12): text, checkbox, radio and choice. */
+@Composable
+private fun FormPanel(
+    fields: List<PdfField>,
+    values: Map<String, String>,
+    loading: Boolean,
+    onValue: (String, String) -> Unit
+) {
+    Surface(tonalElevation = 1.dp, modifier = Modifier.fillMaxWidth()) {
+        when {
+            loading -> Row(
+                modifier = Modifier.fillMaxWidth().padding(12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                CircularProgressIndicator(Modifier.size(18.dp))
+                Text("  Loading fields…", style = MaterialTheme.typography.bodySmall)
+            }
+            fields.isEmpty() -> Text(
+                "This document has no fillable fields.",
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.padding(12.dp)
+            )
+            else -> LazyColumn(modifier = Modifier.fillMaxWidth().heightIn(max = 220.dp)) {
+                items(fields) { field -> FieldRow(field, values, onValue) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun FieldRow(field: PdfField, values: Map<String, String>, onValue: (String, String) -> Unit) {
+    val value = values[field.name] ?: field.value ?: ""
+    Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)) {
+        Text(field.name, style = MaterialTheme.typography.labelMedium)
+        when (field.kind) {
+            FieldKind.TEXT, FieldKind.CHOICE ->
+                if (field.kind == FieldKind.CHOICE && field.options.isNotEmpty()) {
+                    Column {
+                        for (option in field.options) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                RadioButton(
+                                    selected = value == option.exportValue,
+                                    onClick = { onValue(field.name, option.exportValue) }
+                                )
+                                Text(option.displayValue, style = MaterialTheme.typography.bodySmall)
+                            }
+                        }
+                    }
+                } else {
+                    OutlinedTextField(
+                        value = value,
+                        onValueChange = { onValue(field.name, it) },
+                        singleLine = !field.multiline,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            FieldKind.CHECKBOX -> Row(verticalAlignment = Alignment.CenterVertically) {
+                Checkbox(
+                    checked = value.isNotEmpty() && value != "Off",
+                    onCheckedChange = { checked ->
+                        val on = field.onStates.firstOrNull() ?: "Yes"
+                        onValue(field.name, if (checked) on else "Off")
+                    }
+                )
+                Text("checked", style = MaterialTheme.typography.bodySmall)
+            }
+            FieldKind.RADIO -> Column {
+                val states = field.onStates.ifEmpty { field.options.map { it.exportValue } }
+                for (state in states) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        RadioButton(selected = value == state, onClick = { onValue(field.name, state) })
+                        Text(
+                            field.options.firstOrNull { it.exportValue == state }?.displayValue ?: state,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                }
+            }
+            else -> Text(
+                "(${field.kind.name.lowercase()} field — read only)",
+                style = MaterialTheme.typography.bodySmall
+            )
+        }
+    }
+}
+
+@Composable
+private fun NoteDialog(onDismiss: () -> Unit, onConfirm: (String) -> Unit) {
+    var text by remember { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = {
+            TextButton(onClick = { onConfirm(text) }, enabled = text.isNotBlank()) { Text("Add") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+        title = { Text("New note") },
+        text = {
+            OutlinedTextField(
+                value = text,
+                onValueChange = { text = it },
+                label = { Text("Note") },
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
+    )
 }
 
 @Composable
@@ -286,6 +526,8 @@ private fun SearchRow(
 @Composable
 private fun SelectionBar(
     text: String,
+    allowHighlight: Boolean,
+    onHighlight: () -> Unit,
     onCopy: () -> Unit,
     onSelectAll: () -> Unit,
     onClear: () -> Unit
@@ -303,6 +545,9 @@ private fun SelectionBar(
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f)
             )
+            if (allowHighlight) {
+                TextButton(onClick = onHighlight) { Text("Highlight") }
+            }
             TextButton(onClick = onCopy) { Text("Copy") }
             TextButton(onClick = onSelectAll) { Text("Select all") }
             TextButton(onClick = onClear) { Text("Clear") }
@@ -318,14 +563,31 @@ private fun PageItem(
     plan: PageRenderPlan?,
     searchRects: List<TextRect>,
     selectionRects: List<TextRect>,
+    editTool: AnnotationTool?,
+    annotations: List<AnnotationSpec>,
+    inkDraft: InkDraft?,
     targetPixelWidth: Int,
     onVisible: (Int, Int) -> Unit,
     onHidden: (Int) -> Unit,
-    onSelect: (Int, Float, Float, Boolean) -> Unit
+    onSelect: (Int, Float, Float, Boolean) -> Unit,
+    onInkStart: (Int, Float, Float) -> Unit,
+    onInkExtend: (Float, Float) -> Unit,
+    onInkEnd: () -> Unit,
+    onNoteTap: (Int, Float, Float) -> Unit
 ) {
     val aspect = remember(box) {
         val (w, h) = if (box != null) box.rotatedWidth to box.rotatedHeight else 612.0 to 792.0
         if (h > 0.0) (w / h).toFloat() else 612f / 792f
+    }
+
+    val gesture = when (editTool) {
+        AnnotationTool.INK -> Modifier.inkGestures(
+            onStart = { fx, fy -> onInkStart(index, fx, fy) },
+            onExtend = onInkExtend,
+            onEnd = onInkEnd
+        )
+        AnnotationTool.NOTE -> Modifier.noteTapGesture { fx, fy -> onNoteTap(index, fx, fy) }
+        else -> Modifier.wordSelectionGestures { fx, fy, extend -> onSelect(index, fx, fy, extend) }
     }
 
     Box(
@@ -335,7 +597,7 @@ private fun PageItem(
             .aspectRatio(aspect)
             .shadow(2.dp)
             .background(Color.White)
-            .wordSelectionGestures { fx, fy, extend -> onSelect(index, fx, fy, extend) },
+            .then(gesture),
         contentAlignment = Alignment.Center
     ) {
         LaunchedEffect(index, targetPixelWidth) {
@@ -353,6 +615,7 @@ private fun PageItem(
                 contentScale = ContentScale.FillWidth
             )
             HighlightOverlay(plan, searchRects, selectionRects)
+            PendingOverlay(plan, annotations, inkDraft)
         } else {
             CircularProgressIndicator(Modifier.size(28.dp))
         }
@@ -394,6 +657,76 @@ private fun DrawScope.drawTextRects(plan: PageRenderPlan, rects: List<TextRect>,
     }
 }
 
+/** Pending annotations (highlight, ink, note) drawn until the file is saved (T12). */
+@Composable
+private fun PendingOverlay(
+    plan: PageRenderPlan?,
+    annotations: List<AnnotationSpec>,
+    inkDraft: InkDraft?
+) {
+    if (plan == null || (annotations.isEmpty() && inkDraft == null)) return
+    Canvas(modifier = Modifier.fillMaxSize()) {
+        drawPendingAnnotations(plan, annotations, inkDraft)
+    }
+}
+
+private fun DrawScope.pagePoint(plan: PageRenderPlan, x: Double, y: Double): Offset {
+    val p = plan.matrix.apply(x, y)
+    return Offset(
+        (p[0] * size.width / plan.pixelWidth).toFloat(),
+        (p[1] * size.height / plan.pixelHeight).toFloat()
+    )
+}
+
+private fun DrawScope.drawPendingAnnotations(
+    plan: PageRenderPlan,
+    annotations: List<AnnotationSpec>,
+    inkDraft: InkDraft?
+) {
+    if (plan.pixelWidth <= 0 || plan.pixelHeight <= 0) return
+    val highlightColor = Color(0x99FFE082)
+    val noteColor = Color(0xFFFFE082)
+    val noteBorder = Color(0xFFB58900)
+    val inkColor = Color(0xFF1A1A1A)
+    for (spec in annotations) {
+        when (spec) {
+            is HighlightSpec -> for (r in spec.rects) {
+                val a = pagePoint(plan, r.left, r.top)
+                val b = pagePoint(plan, r.right, r.bottom)
+                drawRect(
+                    color = highlightColor,
+                    topLeft = Offset(min(a.x, b.x), min(a.y, b.y)),
+                    size = Size(abs(b.x - a.x), abs(b.y - a.y))
+                )
+            }
+            is InkSpec -> for (stroke in spec.strokes) drawPolyline(plan, stroke, inkColor, 3f)
+            is NoteSpec -> {
+                val a = pagePoint(plan, spec.rect.left, spec.rect.top)
+                val b = pagePoint(plan, spec.rect.right, spec.rect.bottom)
+                val topLeft = Offset(min(a.x, b.x), min(a.y, b.y))
+                val extent = Size(abs(b.x - a.x).coerceAtLeast(10f), abs(b.y - a.y).coerceAtLeast(10f))
+                drawRect(color = noteColor, topLeft = topLeft, size = extent)
+                drawRect(color = noteBorder, topLeft = topLeft, size = extent, style = Stroke(1.5f))
+            }
+        }
+    }
+    if (inkDraft != null) drawPolyline(plan, inkDraft.points, inkColor, 3f)
+}
+
+private fun DrawScope.drawPolyline(plan: PageRenderPlan, points: List<Double>, color: Color, width: Float) {
+    var i = 0
+    while (i + 3 < points.size) {
+        drawLine(
+            color = color,
+            start = pagePoint(plan, points[i], points[i + 1]),
+            end = pagePoint(plan, points[i + 2], points[i + 3]),
+            strokeWidth = width
+        )
+        i += 2
+    }
+}
+
+
 /**
  * Tap to select the word under the finger, or hold and drag to extend the
  * selection by word. Movement before the long-press timeout is left to the
@@ -434,6 +767,65 @@ private fun Modifier.wordSelectionGestures(
                     tap = false
                 }
             }
+        }
+    }
+}
+
+/**
+ * Freehand ink: the first touch starts a stroke and every moved pointer extends
+ * it, so the whole finger path becomes one polyline (T12).
+ */
+private fun Modifier.inkGestures(
+    onStart: (fx: Float, fy: Float) -> Unit,
+    onExtend: (fx: Float, fy: Float) -> Unit,
+    onEnd: () -> Unit
+): Modifier = pointerInput(Unit) {
+    fun fraction(offset: Offset): Pair<Float, Float> =
+        offset.x / size.width.coerceAtLeast(1) to offset.y / size.height.coerceAtLeast(1)
+
+    awaitEachGesture {
+        val down = awaitFirstDown(requireUnconsumed = false)
+        val (sx, sy) = fraction(down.position)
+        onStart(sx, sy)
+        var last = down.position
+        while (true) {
+            val event = awaitPointerEvent()
+            val change = event.changes.firstOrNull { it.id == down.id } ?: break
+            if (!change.pressed) break
+            if ((change.position - last).getDistance() >= 2f) {
+                last = change.position
+                val (fx, fy) = fraction(change.position)
+                onExtend(fx, fy)
+                change.consume()
+            }
+        }
+        onEnd()
+    }
+}
+
+/** Tap anywhere on the page to drop a sticky note there (T12). */
+private fun Modifier.noteTapGesture(onTap: (fx: Float, fy: Float) -> Unit): Modifier = pointerInput(Unit) {
+    fun fraction(offset: Offset): Pair<Float, Float> =
+        offset.x / size.width.coerceAtLeast(1) to offset.y / size.height.coerceAtLeast(1)
+
+    awaitEachGesture {
+        val down = awaitFirstDown(requireUnconsumed = false)
+        var moved = false
+        var tapped = false
+        while (true) {
+            val event = awaitPointerEvent()
+            val change = event.changes.firstOrNull { it.id == down.id } ?: break
+            if (!change.pressed) {
+                if (!moved) tapped = true
+                break
+            }
+            if ((change.position - down.position).getDistance() > viewConfiguration.touchSlop) {
+                moved = true
+            }
+        }
+        if (tapped) {
+            val (fx, fy) = fraction(down.position)
+            onTap(fx, fy)
         }
     }
 }

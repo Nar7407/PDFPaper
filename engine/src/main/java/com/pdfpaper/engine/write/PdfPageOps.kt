@@ -1,5 +1,6 @@
 package com.pdfpaper.engine.write
 
+import com.pdfpaper.engine.annot.AnnotationSpec
 import com.pdfpaper.engine.model.PdfArray
 import com.pdfpaper.engine.model.PdfDict
 import com.pdfpaper.engine.model.PdfDocument
@@ -33,6 +34,42 @@ object PdfPageOps {
         version: String = PdfWriter.DEFAULT_VERSION
     ): Result<ByteArray> = runCatching {
         PdfDocumentAssembler(selections, primary, version).assemble()
+    }
+
+    /**
+     * Writes a new document with [annotations] added on top of the existing ones
+     * (ISO 32000-1, §12.5). The selection keeps every page in order; annotations
+     * are appended to their page's /Annots with fresh appearance streams.
+     */
+    fun applyAnnotations(
+        document: PdfDocument,
+        annotations: List<AnnotationSpec>,
+        version: String = PdfWriter.DEFAULT_VERSION
+    ): Result<ByteArray> = edit(document, annotations, emptyMap(), version)
+
+    /**
+     * Fills AcroForm fields, by fully-qualified name, and writes appearance
+     * streams (§12.7.4.4, §12.5.5).
+     */
+    fun fillForm(
+        document: PdfDocument,
+        values: Map<String, String>,
+        version: String = PdfWriter.DEFAULT_VERSION
+    ): Result<ByteArray> = edit(document, emptyList(), values, version)
+
+    /**
+     * One save that both adds annotations and fills form fields (T12). Either
+     * list/map may be empty. The output is a fresh classic-xref file that keeps
+     * links, bookmarks and the rest of the AcroForm intact.
+     */
+    fun edit(
+        document: PdfDocument,
+        annotations: List<AnnotationSpec> = emptyList(),
+        formValues: Map<String, String> = emptyMap(),
+        version: String = PdfWriter.DEFAULT_VERSION
+    ): Result<ByteArray> = runCatching {
+        val selections = document.pages().indices.map { PdfPageSelection(document, it) }
+        PdfDocumentAssembler(selections, document, version, annotations, formValues).assemble()
     }
 
     /** Adds [degrees] clockwise rotation to each page in [pages] (§14.11.2). */

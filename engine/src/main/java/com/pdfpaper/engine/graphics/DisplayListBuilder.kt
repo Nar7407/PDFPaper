@@ -1,9 +1,12 @@
 package com.pdfpaper.engine.graphics
 
+import com.pdfpaper.engine.annot.AnnotationType
+import com.pdfpaper.engine.annot.PdfAnnotation
 import com.pdfpaper.engine.content.ContentCommand
 import com.pdfpaper.engine.content.parseContent
 import com.pdfpaper.engine.filter.decoded
 import com.pdfpaper.engine.geom.PdfMatrix
+import com.pdfpaper.engine.geom.PdfRect
 import com.pdfpaper.engine.image.ExternalImageDecoder
 import com.pdfpaper.engine.image.PdfImages
 import com.pdfpaper.engine.image.RasterImage
@@ -65,6 +68,164 @@ internal class DisplayListBuilder(
 
         walk(parsed.commands, page.resources, GraphicsState(), 0)
         return DisplayList(commands, warnings)
+    }
+
+    /**
+     * Builds a display list that paints the page's annotations (§12.5). An
+     * annotation with a normal appearance stream is replayed through the
+     * appearance transform (§12.5.5); one without gets a synthetic appearance
+     * from its geometry so highlight, underline, strikeout, ink, note, stamp and
+     * link still render. Hidden annotations are skipped.
+     */
+    fun buildAnnotations(annotations: List<PdfAnnotation>): DisplayList {
+        currentResources = page.resources
+        for (annot in annotations) paintAnnotation(annot)
+        return DisplayList(commands, warnings)
+    }
+
+    private fun paintAnnotation(annot: PdfAnnotation) {
+        if (annot.hidden) return
+        val rect = annot.rect ?: return
+        val ap = annot.appearance
+        if (ap != null && (ap.dict["Subtype"] as? PdfName)?.name == "Form") {
+            val bbox = (ap.dict["BBox"] as? PdfArray)?.items?.mapNotNull { toDouble(it) }
+            val state = GraphicsState()
+            state.ctm = appearanceMatrix(rect, bbox)
+            drawForm(ap, state, 0)
+            return
+        }
+        when (annot.type) {
+            AnnotationType.HIGHLIGHT -> paintQuads(annot, rect)
+            AnnotationType.UNDERLINE, AnnotationType.SQUIGGLY ->
+                paintQuadLine(annot, rect, atBottom = true)
+            AnnotationType.STRIKEOUT -> paintQuadLine(annot, rect, atBottom = false)
+            AnnotationType.INK -> paintInk(annot)
+            AnnotationType.LINK ->
+                if (annot.hasVisibleBorder) {
+                    paintBox(rect, annot.color ?: PdfColor.BLACK, annot.borderWidth ?: 1.0, filled = false)
+                }
+            AnnotationType.TEXT -> paintNoteIcon(rect, annot.color ?: DEFAULT_NOTE_COLOR)
+            AnnotationType.STAMP ->
+                paintBox(rect, annot.color ?: DEFAULT_STAMP_COLOR, annot.borderWidth ?: 1.0, filled = true)
+            AnnotationType.FREE_TEXT, AnnotationType.SQUARE ->
+                paintBox(rect, annot.color ?: PdfColor.BLACK, annot.borderWidth ?: 1.0, filled = false)
+            AnnotationType.CIRCLE ->
+                paintCircle(rect, annot.color ?: PdfColor.BLACK, annot.borderWidth ?: 1.0)
+            AnnotationType.WIDGET ->
+                paintBox(rect, annot.color ?: DEFAULT_WIDGET_COLOR, annot.borderWidth ?: 1.0, filled = false)
+            else -> {} // unsupported subtypes paint nothing rather than guess
+        }
+    }
+
+    /** Highlight: fill each quadrilateral with the annotation colour (Table 164). */
+    private fun paintQuads(annot: PdfAnnotation, fallback: PdfRect) {
+        val color = annot.color ?: DEFAULT_HIGHLIGHT_COLOR
+        val rects = annot.quadBounds().ifEmpty { listOf(fallback) }
+        for (r in rects) {
+            if (r.isEmpty) continue
+            commands += SaveGraphicsState(PdfMatrix.IDENTITY)
+            commands += SetBlendMode("Multiply", PdfMatrix.IDENTITY)
+            commands += FillPath(
+                PdfPath.rectangle(r.left, r.bottom, r.right, r.top),
+                PdfMatrix.IDENTITY, color, HIGHLIGHT_ALPHA, false
+            )
+            commands += RestoreGraphicsState(PdfMatrix.IDENTITY)
+        }
+    }
+
+    /** Underline / strikeout: a rule along the bottom edge or the midline. */
+    private fun paintQuadLine(annot: PdfAnnotation, fallback: PdfRect, atBottom: Boolean) {
+        val color = annot.color ?: DEFAULT_HIGHLIGHT_COLOR
+        val width = (annot.borderWidth ?: 0.0).takeIf { it > 0.0 } ?: 1.0
+        val rects = annot.quadBounds().ifEmpty { listOf(fallback) }
+        for (r in rects) {
+            if (r.isEmpty) continue
+            val y = if (atBottom) r.bottom + r.height * 0.1 else r.bottom + r.height * 0.5
+            val path = PdfPath(listOf(MoveTo(r.left, y), LineTo(r.right, y)))
+            commands += StrokePath(path, PdfMatrix.IDENTITY, color, 1.0, LineStyle(width = width))
+        }
+    }
+
+    /** Ink: stroke each /InkList polyline (§12.5.6.13). */
+    private fun paintInk(annot: PdfAnnotation) {
+        val color = annot.color ?: PdfColor.BLACK
+        val width = (annot.borderWidth ?: 0.0).takeIf { it > 0.0 } ?: 1.0
+        for (stroke in annot.inkLists) {
+            if (stroke.size < 4) continue
+            val segments = ArrayList<PathSegment>(stroke.size / 2)
+            var i = 0
+            while (i + 1 < stroke.size) {
+                val x = stroke[i]
+                val y = stroke[i + 1]
+                segments += if (segments.isEmpty()) MoveTo(x, y) else LineTo(x, y)
+                i += 2
+            }
+            commands += StrokePath(
+                PdfPath(segments), PdfMatrix.IDENTITY, color, 1.0,
+                LineStyle(width = width, cap = 1, join = 1)
+            )
+        }
+    }
+
+    private fun paintNoteIcon(rect: PdfRect, color: PdfColor) {
+        if (rect.isEmpty) return
+        val box = PdfPath.rectangle(rect.left, rect.bottom, rect.right, rect.top)
+        commands += FillPath(box, PdfMatrix.IDENTITY, color, 1.0, false)
+        commands += StrokePath(box, PdfMatrix.IDENTITY, PdfColor.BLACK, 1.0, LineStyle(width = 0.75))
+        val fold = minOf(rect.width, rect.height) * 0.35
+        val foldPath = PdfPath(
+            listOf(
+                MoveTo(rect.right - fold, rect.top),
+                LineTo(rect.right - fold, rect.top - fold),
+                LineTo(rect.right, rect.top - fold)
+            )
+        )
+        commands += StrokePath(foldPath, PdfMatrix.IDENTITY, PdfColor.BLACK, 1.0, LineStyle(width = 0.75))
+    }
+
+    private fun paintBox(rect: PdfRect, color: PdfColor, width: Double, filled: Boolean) {
+        if (rect.isEmpty) return
+        val path = PdfPath.rectangle(rect.left, rect.bottom, rect.right, rect.top)
+        if (filled) commands += FillPath(path, PdfMatrix.IDENTITY, color, 0.35, false)
+        commands += StrokePath(path, PdfMatrix.IDENTITY, color, 1.0, LineStyle(width = width.coerceAtLeast(0.5)))
+    }
+
+    /** Circle approximated with four cubic Béziers (§8.5.2.2). */
+    private fun paintCircle(rect: PdfRect, color: PdfColor, width: Double) {
+        if (rect.isEmpty) return
+        val cx = rect.centerX
+        val cy = rect.centerY
+        val rx = rect.width / 2.0
+        val ry = rect.height / 2.0
+        val k = 0.5522847498307936
+        val path = PdfPath(
+            listOf(
+                MoveTo(cx, cy + ry),
+                CurveTo(cx + k * rx, cy + ry, cx + rx, cy + k * ry, cx + rx, cy),
+                CurveTo(cx + rx, cy - k * ry, cx + k * rx, cy - ry, cx, cy - ry),
+                CurveTo(cx - k * rx, cy - ry, cx - rx, cy - k * ry, cx - rx, cy),
+                CurveTo(cx - rx, cy + k * ry, cx - k * rx, cy + ry, cx, cy + ry),
+                ClosePath
+            )
+        )
+        commands += StrokePath(path, PdfMatrix.IDENTITY, color, 1.0, LineStyle(width = width.coerceAtLeast(0.5)))
+    }
+
+    /**
+     * Appearance → page matrix for an annotation (§12.5.5): the appearance's
+     * /BBox is scaled and translated onto the annotation /Rect, then the
+     * appearance's own /Matrix is applied by [drawForm].
+     */
+    private fun appearanceMatrix(rect: PdfRect, bbox: List<Double>?): PdfMatrix {
+        val b = if (bbox != null && bbox.size >= 4) bbox else
+            listOf(0.0, 0.0, rect.width, rect.height)
+        val bw = b[2] - b[0]
+        val bh = b[3] - b[1]
+        val sx = if (bw != 0.0) rect.width / bw else 1.0
+        val sy = if (bh != 0.0) rect.height / bh else 1.0
+        return PdfMatrix.translation(rect.left, rect.bottom) *
+            PdfMatrix.scaling(sx, sy) *
+            PdfMatrix.translation(-b[0], -b[1])
     }
 
     private fun warnOnce(key: String, message: String) {
@@ -499,5 +660,10 @@ internal class DisplayListBuilder(
 
     private companion object {
         const val MAX_FORM_DEPTH = 16
+        const val HIGHLIGHT_ALPHA = 0.5
+        val DEFAULT_HIGHLIGHT_COLOR = PdfColor(1.0, 0.92, 0.23)
+        val DEFAULT_NOTE_COLOR = PdfColor(1.0, 0.87, 0.0)
+        val DEFAULT_STAMP_COLOR = PdfColor(0.85, 0.2, 0.2)
+        val DEFAULT_WIDGET_COLOR = PdfColor(0.6, 0.6, 0.6)
     }
 }

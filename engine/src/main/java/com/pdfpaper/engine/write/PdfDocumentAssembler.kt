@@ -1,5 +1,8 @@
 package com.pdfpaper.engine.write
 
+import com.pdfpaper.engine.annot.AnnotationSpec
+import com.pdfpaper.engine.annot.AnnotationWriter
+import com.pdfpaper.engine.form.FormFiller
 import com.pdfpaper.engine.model.PdfArray
 import com.pdfpaper.engine.model.PdfDict
 import com.pdfpaper.engine.model.PdfDocument
@@ -55,7 +58,11 @@ data class PdfPageSelection(
 internal class PdfDocumentAssembler(
     private val selections: List<PdfPageSelection>,
     private val primary: PdfDocument,
-    private val version: String
+    private val version: String,
+    /** New annotations to add, grouped by source page index (T12). */
+    private val additions: List<AnnotationSpec> = emptyList(),
+    /** AcroForm field values to write, by fully-qualified name (T12). */
+    private val formValues: Map<String, String> = emptyMap()
 ) {
 
     private val builder = PdfDocumentBuilder(version)
@@ -65,6 +72,8 @@ internal class PdfDocumentAssembler(
     private val targetPageRefs = LinkedHashSet<PdfRef>()
     private val rawNames = LinkedHashMap<String, PdfObject>()
     private val keptNames = HashSet<String>()
+    private val additionsByPage: Map<Int, List<AnnotationSpec>> = additions.groupBy { it.pageIndex }
+    private val annotationWriter: AnnotationWriter by lazy { AnnotationWriter(builder) }
 
     fun assemble(): ByteArray {
         checkNotEncrypted(primary)
@@ -126,7 +135,9 @@ internal class PdfDocumentAssembler(
         // 6. Catalog.
         builder.root = buildCatalog(pagesRef)
 
-        // 7. Document info and /ID from the primary document.
+        // 7. AcroForm field values (T12) are written into the already-copied
+        //    field objects, then /Info and /ID are copied across.
+        if (formValues.isNotEmpty()) FormFiller(builder).fill(formValues)
         copyInfo()
         copyId()
         return builder.build()
@@ -150,7 +161,14 @@ internal class PdfDocumentAssembler(
         materialise(entries, copier, "Rotate", src["Rotate"] ?: inheritedRotate(page))
         materialise(entries, copier, "Resources", src["Resources"] ?: page.resources)
 
-        val annots = src["Annots"]?.let { copyAnnots(copier, it) }
+        val existingAnnots = src["Annots"]?.let { copyAnnots(copier, it) }
+        val extras = if (doc === primary) additionsByPage[selection.pageIndex] else null
+        val added = extras?.mapNotNull { annotationWriter.build(it, ref) }.orEmpty()
+        val annots = when {
+            added.isEmpty() -> existingAnnots
+            existingAnnots == null -> PdfArray(added)
+            else -> PdfArray(existingAnnots.items + added)
+        }
         if (annots != null) entries[PdfName("Annots")] = annots else entries.remove(PdfName("Annots"))
 
         if (selection.rotationDelta % 360 != 0) {
