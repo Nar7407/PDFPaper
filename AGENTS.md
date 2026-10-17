@@ -35,9 +35,9 @@ for touch. Do not copy PdfCraft/ArtCraft code, logos or branding.
 
 ## Current status
 (Updated at the end of every session. Newest at the top.)
-- Last session: 2026-10-17 — T6 done. :engine page tree (nested trees, inheritance, tolerant traversal) + content-stream parser with inline images; 28 new tests (92 total), corpus 10/10 with page counts (12 pages), build green.
-- Done: T0, T1, T2, T3, T4, T5, T6
-- Broken / known issues: none yet
+- Last session: 2026-10-17 — T7 done. :engine text extraction: fonts (simple Type1/TrueType + Type0/Identity-H/V), encodings (WinAnsi/MacRoman/Standard, /Differences), /ToUnicode CMaps, text operators (BT/ET, Tf, Td/TD/Tm/T*, Tj/TJ/'/"), positioned Unicode runs with sizes + bboxes; 30 new tests (122 total), corpus 10/10 + text-run metric, build green.
+- Done: T0, T1, T2, T3, T4, T5, T6, T7
+- Broken / known issues: standard-14 AFM widths not embedded (missing /Widths → 0 advance); StandardEncoding approximated from WinAnsi; only Identity-H/V predefined CMaps implemented (all others are documented-degraded).
 - Next task: T7
 
 ## Milestone checklist
@@ -48,7 +48,7 @@ for touch. Do not copy PdfCraft/ArtCraft code, logos or branding.
 - [x] T4  Engine: object model + streams
 - [x] T5  Engine: filters (Flate, ASCIIHex, ASCII85, LZW, RunLength)
 - [x] T6  Engine: page tree + content streams
-- [ ] T7  Engine: fonts + text
+- [x] T7  Engine: fonts + text
 - [ ] T8  Engine: graphics + images
 - [ ] T9  Rendering to bitmap + viewer in app
 - [ ] T10 Page operations (rotate/delete/reorder/merge/split) + save
@@ -70,6 +70,7 @@ for touch. Do not copy PdfCraft/ArtCraft code, logos or branding.
 - 2026-10-16 (T4): no new dependencies. PdfDocument caches resolved objects (incl. misses); cycles resolve to null. Filtered object streams resolve to null until T5. Stream data tokens are skipped by byte position after parsing; stray ')'/lone '>' tokenize as words so binary stream data survives tokenizing.
 - 2026-10-16 (T5): no new dependencies (JDK java.util.zip for Flate). Decode is lazy (streams stay encoded until decoded()) with a 256 MB output guard. Corrupt input returns the decoded prefix + warnings, never throws. LZW width rule verified against the PDFBox reference: decoder bumps on table-size + EarlyChange, encoder one entry earlier; PNG rows always carry a filter-type byte for predictors 10-15; predictors support 8 BPC only.
 - 2026-10-17 (T6): no new dependencies. Page tree traversal is purely walk-based (/Count is ignored), so missing or wrong counts never matter. Content streams get their own lazy tokenizer (a whole-file tokenizer cannot survive binary inline-image data); BI/ID/EI collapse into one "ID" command holding a PdfInlineImage. PdfInlineImage lives in the model package because the sealed PdfObject hierarchy only admits same-package inheritors. Rebuilt files (broken/missing xref) recover /Root by scanning for "/Type /Catalog"; resolveRoot now uses the typed trailer root so recovery applies everywhere. Inline images keep exactly one whitespace byte as delimiter after ID and one before EI (byte-exact data capture).
+- 2026-10-17 (T7): no new dependencies. Encoding tables (CP1252/WinAnsi, MacRoman) generated from Python codecs cp1252/mac_roman and embedded as \uXXXX literals; StandardEncoding is approximated (WinAnsi + quoteright-at-0x27). Glyph-name table is a compact AGL subset (ASCII, Latin-1, common punctuation) plus uniXXXX/uXXXX patterns; unknown /Differences names decode to "" (dropped), never throw. Missing /Widths → 0 advance (full standard-14 AFM metrics are a T14 candidate); missing /Encoding → Standard (Type1) or WinAnsi (TrueType). ToUnicode CMap parser takes bfchar + both bfrange forms, masks 2-byte sources onto low-byte keys for simple fonts, caps output at 100 000 entries. Type0 fonts support only Identity-H/V; any /BaseFont CId encoding without ToUnicode reads W-array widths from the DescendantFonts dict (/DW default 1000) and CIDs as Unicode BMP (best effort).  Extraction emits one positioned Unicode run per text-showing operand, bbox = advance×fontSize quad mapped through (CTM∘Tm), axis-aligned. Td/TD/T* offsets are relative to the current LINE START (Tlm is not advanced by glyph ops — ISO §9.4.4 / mainstream extractor semantics); glyph advances scale by Tz/100 per glyph, Tw applies only to code 32, Tc applies per glyph. 
 
 ## Test corpus
 Folder: /testdata (real-world PDFs). Metric: files that open without crash / total.
@@ -78,3 +79,5 @@ Pages: 12 total (every file reports its page count; rebuilt files found
 their catalog via the rebuild /Root recovery).
 Streams decoded: 1/1 (only content-reachable streams are indexed; the
 unfiltered xref-stream object itself is not in any xref table).
+Text runs: 0 (T7 corpus files are structural fixtures with no text; the
+harness runs page.extractText() on every page as a no-crash check).

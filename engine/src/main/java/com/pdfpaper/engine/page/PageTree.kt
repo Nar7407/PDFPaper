@@ -35,6 +35,10 @@ class PdfPage internal constructor(
     private val doc: PdfDocument
 ) {
 
+    /** Document owning this page (public so cross-package text extraction
+     *  can resolve font/ToUnicode references). */
+    val document: PdfDocument get() = doc
+
     /** MediaBox; inherited when the page omits it. Null only if no ancestor has one. */
     val mediaBox: PdfArray? = inherited("MediaBox") as? PdfArray
 
