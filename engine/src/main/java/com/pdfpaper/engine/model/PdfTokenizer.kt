@@ -103,18 +103,12 @@ internal fun tokenize(input: ByteArray): List<PdfToken> {
     return out
 }
 
-private val NUMBER = Regex("[+-]?(\\d+\\.\\d*|\\.\\d+|\\d+)([eE][+-]?\\d+)?")
-
-private fun classifyNumberOrWord(text: String, start: Int, end: Int): PdfToken {
-    if (!NUMBER.matches(text)) return TWord(text, start, end)
-    val isReal = text.contains('.') || text.contains('e') || text.contains('E')
-    if (isReal) {
-        return TReal(text.toDoubleOrNull() ?: throw PdfParseException("Bad real '$text'"), start, end)
+private fun classifyNumberOrWord(text: String, start: Int, end: Int): PdfToken =
+    when (val number = scanNumber(text)) {
+        null -> TWord(text, start, end)
+        is NumberLong -> TInt(number.value, start, end)
+        is NumberDouble -> TReal(number.value, start, end)
     }
-    text.toLongOrNull()?.let { return TInt(it, start, end) }
-    // Integer overflow: keep the value as a real rather than failing.
-    return TReal(text.toDoubleOrNull() ?: throw PdfParseException("Bad number '$text'"), start, end)
-}
 
 /** Literal string (§7.3.4.2): nesting, escapes, octal, line continuation; unterminated returns what was read. */
 private fun readLiteral(input: ByteArray, start: Int): Pair<ByteArray, Int> {

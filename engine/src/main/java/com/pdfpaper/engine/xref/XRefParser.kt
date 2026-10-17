@@ -92,10 +92,7 @@ internal object XRefParser {
             val trimmed = line.trim()
             if (trimmed.isEmpty()) continue
             if (trimmed == "trailer") break
-            val parts = trimmed.split(Regex("\\s+"))
-            if (parts.size != 2) return null
-            val first = parts[0].toIntOrNull() ?: return null
-            val count = parts[1].toIntOrNull() ?: return null
+            val (first, count) = parseTwoInts(trimmed) ?: return null
             if (first < 0 || count < 0) return null
             repeat(count) { k ->
                 val (entryLine, entryNext) = readLine(text, pos) ?: return null
@@ -110,11 +107,21 @@ internal object XRefParser {
     }
 
     private fun parseClassicEntry(line: String, objNum: Int): XRefEntry? {
-        val parts = line.trim().split(Regex("\\s+"))
-        if (parts.size < 3) return null
-        val offset = parts[0].toLongOrNull() ?: return null
-        val gen = parts[1].toIntOrNull() ?: return null
-        return when (parts[2].firstOrNull()) {
+        var i = 0
+        val n = line.length
+        while (i < n && line[i].isWhitespace()) i++
+        val offsetStart = i
+        while (i < n && line[i].isDigit()) i++
+        if (i == offsetStart) return null
+        val offset = line.substring(offsetStart, i).toLongOrNull() ?: return null
+        while (i < n && line[i].isWhitespace()) i++
+        val genStart = i
+        while (i < n && line[i].isDigit()) i++
+        if (i == genStart) return null
+        val gen = line.substring(genStart, i).toIntOrNull() ?: return null
+        while (i < n && line[i].isWhitespace()) i++
+        if (i >= n) return null
+        return when (line[i]) {
             'n' -> XRefEntry(objNum, gen, offset, EntryKind.UNCOMPRESSED)
             'f' -> XRefEntry(objNum, gen, offset, EntryKind.FREE)
             else -> null
@@ -436,6 +443,25 @@ internal object XRefParser {
         return line to next
     }
 
+    /** Parses a whitespace-separated pair of non-negative ints ("first count"), nothing else. */
+    private fun parseTwoInts(line: String): Pair<Int, Int>? {
+        var i = 0
+        val n = line.length
+        while (i < n && line[i].isWhitespace()) i++
+        val a0 = i
+        while (i < n && line[i].isDigit()) i++
+        if (i == a0) return null
+        val a = line.substring(a0, i).toIntOrNull() ?: return null
+        while (i < n && line[i].isWhitespace()) i++
+        val b0 = i
+        while (i < n && line[i].isDigit()) i++
+        if (i == b0) return null
+        val b = line.substring(b0, i).toIntOrNull() ?: return null
+        while (i < n && line[i].isWhitespace()) i++
+        if (i != n) return null
+        return a to b
+    }
+
     private fun skipWsAndComments(text: String, start: Int): Int {
         var i = start
         while (i < text.length) {
@@ -511,13 +537,38 @@ internal object XRefParser {
 
 /** "N G obj" header check used to validate xref entries and rebuilt candidates. */
 internal fun matchesObjHeader(head: ByteArray, objNum: Int, gen: Int): Boolean {
-    val text = head.toString(StandardCharsets.ISO_8859_1)
-    val end = text.indexOf('\n').takeIf { it >= 0 }?.let { minOf(it, text.length) } ?: text.length
-    val parts = text.substring(0, end).trim().split(Regex("\\s+"))
-    return parts.size >= 3 &&
-        parts[0].toIntOrNull() == objNum &&
-        parts[1].toIntOrNull() == gen &&
-        parts[2] == "obj"
+    var i = 0
+    var digits = 0
+    var value = 0
+    while (i < head.size && head[i].isAsciiDigitByte()) {
+        value = value * 10 + (head[i] - '0'.code.toByte())
+        digits++
+        if (digits > 10) return false
+        i++
+    }
+    if (digits == 0 || value != objNum) return false
+    if (i >= head.size || !head[i].isAsciiWsByte()) return false
+    while (i < head.size && head[i].isAsciiWsByte()) i++
+    digits = 0
+    value = 0
+    while (i < head.size && head[i].isAsciiDigitByte()) {
+        value = value * 10 + (head[i] - '0'.code.toByte())
+        digits++
+        if (digits > 10) return false
+        i++
+    }
+    if (digits == 0 || value != gen) return false
+    if (i >= head.size || !head[i].isAsciiWsByte()) return false
+    while (i < head.size && head[i].isAsciiWsByte()) i++
+    if (i + 3 > head.size) return false
+    return head[i] == 'o'.code.toByte() && head[i + 1] == 'b'.code.toByte() && head[i + 2] == 'j'.code.toByte()
+}
+
+private fun Byte.isAsciiDigitByte(): Boolean = this in '0'.code.toByte()..'9'.code.toByte()
+
+private fun Byte.isAsciiWsByte(): Boolean {
+    val c = toInt() and 0xFF
+    return c == 0 || c == 9 || c == 10 || c == 12 || c == 13 || c == 32
 }
 
 /** Index of "endobj" with delimiters on both sides, or -1. */

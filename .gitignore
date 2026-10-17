@@ -8,3 +8,8 @@ build/
 .externalNativeBuild
 .cxx
 local.properties
+
+# Release signing material is never committed (T14).
+keystore.properties
+*.jks
+*.keystore

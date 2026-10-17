@@ -32,3 +32,16 @@ tasks.register<JavaExec>("corpusCheck") {
     inputs.dir(testdataDir)
     outputs.file(corpusReport)
 }
+
+val perfReport = layout.buildDirectory.file("perf-report.txt")
+
+// T14: generates a scaled sibling corpus (the committed /testdata files are
+// tiny structural fixtures) and times each engine phase against it.
+tasks.register<JavaExec>("perfCheck") {
+    group = "verification"
+    description = "Profiles memory and time on a generated large PDF corpus (build/perf-report.txt)."
+    classpath = sourceSets["main"].runtimeClasspath
+    mainClass.set("com.pdfpaper.engine.tools.PerfCheckKt")
+    args(layout.buildDirectory.dir("perf-corpus").get().asFile.absolutePath, perfReport.get().asFile.absolutePath)
+    outputs.file(perfReport)
+}

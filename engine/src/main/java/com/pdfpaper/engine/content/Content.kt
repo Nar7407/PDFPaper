@@ -4,10 +4,13 @@ import com.pdfpaper.engine.model.PdfArray
 import com.pdfpaper.engine.model.PdfDict
 import com.pdfpaper.engine.model.PdfInteger
 import com.pdfpaper.engine.model.PdfName
+import com.pdfpaper.engine.model.NumberDouble
+import com.pdfpaper.engine.model.NumberLong
 import com.pdfpaper.engine.model.PdfObject
 import com.pdfpaper.engine.model.PdfInlineImage
 import com.pdfpaper.engine.model.PdfReal
 import com.pdfpaper.engine.model.PdfString
+import com.pdfpaper.engine.model.scanNumber
 
 /**
  * Parsed page content (ISO 32000-1, §7.8): commands in stream order, one per
@@ -260,8 +263,6 @@ private fun findEi(data: ByteArray, from: Int): Pair<Int, Int>? {
  * the object tokenizer's byte semantics but scans lazily: binary inline-image
  * data must be captured byte-exact and cannot survive whole-input tokenizing.
  */
-private val NUMBER = Regex("[+-]?(\\d+\\.\\d*|\\.\\d+|\\d+)([eE][+-]?\\d+)?")
-
 internal sealed interface CToken {
     object CArrayStart : CToken
     object CArrayEnd : CToken
@@ -426,22 +427,11 @@ internal class ContentScanner(val data: ByteArray) {
         val start = pos
         while (pos < data.size && !isContentDelim(data[pos])) pos++
         val text = data.copyOfRange(start, pos).toString(Charsets.ISO_8859_1)
-        if (NUMBER.matches(text)) {
-            val isReal = text.contains('.') || text.contains('e') || text.contains('E')
-            if (isReal) {
-                val v = text.toDoubleOrNull()
-                if (v == null) {
-                    warnings += "bad real '$text'"
-                    return CToken.CWord(text)
-                }
-                return CToken.CReal(v)
-            }
-            text.toLongOrNull()?.let { return CToken.CInt(it) }
-            val v = text.toDoubleOrNull()
-            if (v == null) return CToken.CWord(text)
-            return CToken.CReal(v)
+        return when (val number = scanNumber(text)) {
+            null -> CToken.CWord(text)
+            is NumberLong -> CToken.CInt(number.value)
+            is NumberDouble -> CToken.CReal(number.value)
         }
-        return CToken.CWord(text)
     }
 
     private fun digitValue(c: Byte): Int? {

@@ -89,25 +89,32 @@ class PdfFile private constructor(
     }
 
     private fun readObjectBytes(ref: XRefEntry): ByteArray? {
-        if (!matchesObjHeader(source.read(ref.offset, HEAD_CHECK), ref.objNum, ref.gen)) {
-            return null
-        }
         var cursor = ref.offset
         var carry = ByteArray(0)
+        var chunkSize = PROBE_CHUNK
         val total = source.size
+        var first = true
         while (cursor < total) {
-            val chunk = source.read(cursor, OBJECT_CHUNK)
+            val chunk = source.read(cursor, chunkSize)
             if (chunk.isEmpty()) break
+            if (first) {
+                if (!matchesObjHeader(chunk, ref.objNum, ref.gen)) return null
+                first = false
+            }
+            val bufStart = cursor - carry.size
             val buf = if (carry.isEmpty()) chunk else carry + chunk
             val idx = indexOfEndObj(buf)
             if (idx >= 0) {
-                val length = (cursor - carry.size + idx - ref.offset).toInt()
+                val length = (bufStart + idx - ref.offset).toInt()
                 if (length < 0) return null
-                return source.read(ref.offset, length)
+                // The common case fits in the first chunk: the scanned buffer
+                // already is the object, so skip the second read.
+                return if (bufStart == ref.offset) buf.copyOfRange(0, idx) else source.read(ref.offset, length)
             }
             carry = buf.copyOfRange(maxOf(0, buf.size - ENDOBJ_KEEP), buf.size)
             cursor += chunk.size
-            if (chunk.size < OBJECT_CHUNK) break
+            if (chunk.size < chunkSize) break
+            chunkSize = OBJECT_CHUNK
         }
         return null
     }
@@ -115,7 +122,7 @@ class PdfFile private constructor(
     override fun close() = source.close()
 
     companion object {
-        private const val HEAD_CHECK = 64
+        private const val PROBE_CHUNK = 8192
         private const val OBJECT_CHUNK = 65536
         private const val ENDOBJ_KEEP = 16
         private const val MAX_CHAIN = 32

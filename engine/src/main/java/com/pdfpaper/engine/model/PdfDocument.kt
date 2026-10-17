@@ -25,6 +25,15 @@ class PdfDocument private constructor(val file: PdfFile) : Closeable {
     private val cache = HashMap<Int, PdfObject?>()
     private val resolving = HashSet<Int>()
 
+    /**
+     * Object streams (§7.5.7) decoded once and indexed by object number, so a
+     * document with thousands of compressed objects never re-inflates the
+     * containing stream per object. The value for a stream that failed to load
+     * is the empty sentinel, which stops retries on corrupt input.
+     */
+    private val objectStreams = HashMap<Int, ObjectStreamData>()
+    private val objectStreamsLoading = HashSet<Int>()
+
     /** Non-null when the document is encrypted; installed by [open]. */
     internal var security: StandardSecurityHandler? = null
         private set
@@ -97,24 +106,49 @@ class PdfDocument private constructor(val file: PdfFile) : Closeable {
     }
 
     private fun readFromObjectStream(streamObjNum: Int, index: Int, wantObjNum: Int): PdfObject? {
-        val stream = deref(streamObjNum) as? PdfStream ?: return null
-        // Object streams are normally Flate-compressed (§7.5.7). Decode through
-        // the filter chain; a failed decode (unknown filter, corrupt data) just
-        // yields null so the caller treats the object as missing.
-        val data = stream.decoded { ref -> resolve(ref) }.getOrNull()?.bytes ?: return null
-        val count = (stream.dict["N"] as? PdfInteger)?.value?.toIntOrNull() ?: return null
-        val first = (stream.dict["First"] as? PdfInteger)?.value?.toIntOrNull() ?: return null
-        if (count <= 0 || first < 0 || first > data.size) return null
-        if (index < 0 || index >= count) return null
-        val header = data.copyOfRange(0, first).toString(Charsets.ISO_8859_1)
-        val numbers = header.trim().split(Regex("\\s+")).map { it.toIntOrNull() ?: return null }
-        if (numbers.size != count * 2) return null
-        val pairs = numbers.chunked(2).map { it[0] to it[1] }
-        if (pairs[index].first != wantObjNum) return null
-        val start = first + pairs[index].second
-        val end = if (index + 1 < count) first + pairs[index + 1].second else data.size
-        if (start < first || end < start || end > data.size) return null
-        return parseDirectObject(data.copyOfRange(start, end)).getOrNull()
+        val data = objectStreams.getOrPut(streamObjNum) {
+            loadObjectStream(streamObjNum) ?: EMPTY_OBJECT_STREAM
+        }
+        // The xref's (stream, index) must agree with the stream's own header;
+        // the whole stream was parsed at once, so every member is now cached.
+        if (index < 0 || index >= data.objNums.size || data.objNums[index] != wantObjNum) return null
+        return cache[wantObjNum]
+    }
+
+    /**
+     * Decodes and parses an object stream once (§7.5.7), caching every contained
+     * object. Object streams are normally Flate-compressed; a failed decode
+     * (unknown filter, corrupt data) yields null so callers treat the objects as
+     * missing. Re-entrancy is guarded because the stream object itself is loaded
+     * through [deref].
+     */
+    private fun loadObjectStream(streamObjNum: Int): ObjectStreamData? {
+        if (!objectStreamsLoading.add(streamObjNum)) return null
+        try {
+            val stream = deref(streamObjNum) as? PdfStream ?: return null
+            val data = stream.decoded { ref -> resolve(ref) }.getOrNull()?.bytes ?: return null
+            val count = (stream.dict["N"] as? PdfInteger)?.value?.toIntOrNull() ?: return null
+            val first = (stream.dict["First"] as? PdfInteger)?.value?.toIntOrNull() ?: return null
+            if (count <= 0 || first < 0 || first > data.size) return null
+            val header = data.copyOfRange(0, first).toString(Charsets.ISO_8859_1)
+            val numbers = header.trim().split(WHITESPACE).map { it.toIntOrNull() ?: return null }
+            if (numbers.size != count * 2) return null
+            val objNums = IntArray(count)
+            for (i in 0 until count) {
+                val objNum = numbers[i * 2]
+                objNums[i] = objNum
+                val start = first + numbers[i * 2 + 1]
+                val end = if (i + 1 < count) first + numbers[i * 2 + 3] else data.size
+                // One malformed member must not deny the others: skip it (it
+                // resolves to null) and keep loading the rest.
+                if (start < first || end < start || end > data.size) continue
+                val obj = parseDirectObject(data.copyOfRange(start, end)).getOrNull() ?: continue
+                cache[objNum] = obj
+            }
+            return ObjectStreamData(objNums)
+        } finally {
+            objectStreamsLoading.remove(streamObjNum)
+        }
     }
 
     override fun close() = file.close()
@@ -140,6 +174,13 @@ class PdfDocument private constructor(val file: PdfFile) : Closeable {
             }
     }
 }
+
+/** Object numbers of one object stream, in xref-index order (§7.5.7). */
+private class ObjectStreamData(val objNums: IntArray)
+
+private val EMPTY_OBJECT_STREAM = ObjectStreamData(IntArray(0))
+
+private val WHITESPACE = Regex("\\s+")
 
 private fun Long.toIntOrNull(): Int? =
     if (this < Int.MIN_VALUE || this > Int.MAX_VALUE) null else toInt()
