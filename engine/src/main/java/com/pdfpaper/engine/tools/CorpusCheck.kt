@@ -5,6 +5,7 @@ import com.pdfpaper.engine.model.PdfDocument
 import com.pdfpaper.engine.model.PdfRef
 import com.pdfpaper.engine.model.PdfStream
 import com.pdfpaper.engine.filter.decoded
+import com.pdfpaper.engine.graphics.buildDisplayList
 import com.pdfpaper.engine.page.PageTreeResult
 import com.pdfpaper.engine.page.pageTree
 import com.pdfpaper.engine.text.extractText
@@ -20,6 +21,8 @@ private data class FileResult(
     val pages: Int,
     val textRuns: Int,
     val textPages: Int,
+    val commands: Int,
+    val images: Int,
     val reason: String
 )
 
@@ -44,6 +47,8 @@ fun main(args: Array<String>) {
     val streamsDecoded = results.sumOf { it.streamsDecoded }
     val pagesTotal = results.sumOf { it.pages }
     val textRunsTotal = results.sumOf { it.textRuns }
+    val commandsTotal = results.sumOf { it.commands }
+    val imagesTotal = results.sumOf { it.images }
 
     val lines = buildList {
         add("PDFPaper corpus report")
@@ -53,11 +58,15 @@ fun main(args: Array<String>) {
         add("Pages: $pagesTotal")
         add("Streams: $streamsDecoded/$streamsTotal decoded")
         add("Text runs: $textRunsTotal")
+        add("Display list: $commandsTotal commands, $imagesTotal images")
         add("")
         for (r in results) {
             if (r.ok) {
                 val suffix = if (r.rebuilt) ", rebuilt from scan" else ""
-                add("[OK] ${r.name} (objects=${r.objects}$suffix) (streams=${r.streamsDecoded}/${r.streamsTotal} decoded) (pages=${r.pages}) (text runs=${r.textRuns})")
+                add(
+                    "[OK] ${r.name} (objects=${r.objects}$suffix) (streams=${r.streamsDecoded}/${r.streamsTotal} decoded) " +
+                        "(pages=${r.pages}) (text runs=${r.textRuns}) (commands=${r.commands}, images=${r.images})"
+                )
             } else {
                 add("[FAIL] ${r.name}: ${r.reason}")
             }
@@ -65,7 +74,7 @@ fun main(args: Array<String>) {
     }
     reportFile.parentFile?.mkdirs()
     reportFile.writeText(lines.joinToString("\n") + "\n")
-    println(lines.take(6).joinToString("\n"))
+    println(lines.take(8).joinToString("\n"))
     println("Report: ${reportFile.absolutePath}")
 }
 
@@ -98,6 +107,8 @@ private fun checkOne(file: File): FileResult {
                         val ps = tree?.pages ?: emptyList()
                         var runs = 0
                         var textPages = 0
+                        var commands = 0
+                        var images = 0
                         for (p in ps) {
                             val t = try {
                                 p.extractText()
@@ -108,24 +119,35 @@ private fun checkOne(file: File): FileResult {
                                 runs += t.runs.size
                                 textPages++
                             }
+                            // T8: building the display list must never crash.
+                            val dl = try {
+                                p.buildDisplayList()
+                            } catch (t: Throwable) {
+                                null
+                            }
+                            if (dl != null) {
+                                commands += dl.commands.size
+                                images += dl.images.size
+                            }
                         }
-                        ps.size to (runs to textPages)
+                        Triple(ps.size, runs to textPages, commands to images)
                     } catch (t: Throwable) {
-                        0 to (0 to 0)
+                        Triple(0, 0 to 0, 0 to 0)
                     }
-                    val (pages, runsInfo) = pageInfos
+                    val (pages, runsInfo, drawInfo) = pageInfos
                     FileResult(
                         file.name, true, it.file.objectCount, it.file.rebuiltFromScan,
-                        total, decoded, pages, runsInfo.first, runsInfo.second, ""
+                        total, decoded, pages, runsInfo.first, runsInfo.second,
+                        drawInfo.first, drawInfo.second, ""
                     )
                 }
             },
             onFailure = { e ->
-                FileResult(file.name, false, 0, false, 0, 0, 0, 0, 0, shortReason(e))
+                FileResult(file.name, false, 0, false, 0, 0, 0, 0, 0, 0, 0, shortReason(e))
             }
         )
     } catch (t: Throwable) {
-        FileResult(file.name, false, 0, false, 0, 0, 0, 0, 0, shortReason(t))
+        FileResult(file.name, false, 0, false, 0, 0, 0, 0, 0, 0, 0, shortReason(t))
     }
 }
 

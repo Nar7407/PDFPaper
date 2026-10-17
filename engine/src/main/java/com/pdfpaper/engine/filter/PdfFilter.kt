@@ -42,6 +42,58 @@ private val BY_NAME: Map<String, PdfFilter> by lazy {
     FILTERS.flatMap { filter -> filter.names.map { it to filter } }.toMap()
 }
 
+/** /Filter names of a stream dictionary, in order; empty when unfiltered (§7.4.2). */
+fun filterNamesOf(dict: PdfDict): List<String> {
+    val filterObj = dict["Filter"] ?: return emptyList()
+    return when (filterObj) {
+        is PdfName -> listOf(filterObj.name)
+        is PdfArray -> filterObj.items.map {
+            (it as? PdfName)?.name ?: throw PdfParseException("/Filter chain entries must be names")
+        }
+        else -> throw PdfParseException("/Filter must be a name or an array of names")
+    }
+}
+
+/** /DecodeParms (or /DP) aligned to [count] filters; missing entries are null (§7.4.2, Table 8). */
+fun decodeParamsOf(dict: PdfDict, count: Int, resolve: (PdfRef) -> PdfObject? = { null }): List<PdfDict?> {
+    val paramObj = dict["DecodeParms"] ?: dict["DP"]
+    return when (paramObj) {
+        null, is PdfNull -> List(count) { null }
+        is PdfDict -> listOf(paramObj) + List(maxOf(0, count - 1)) { null }
+        is PdfRef -> listOf(resolveDict(paramObj, resolve)) + List(maxOf(0, count - 1)) { null }
+        is PdfArray -> (0 until count).map { i ->
+            when (val entry = paramObj.items.getOrNull(i)) {
+                null, is PdfNull -> null
+                is PdfDict -> entry
+                is PdfRef -> resolveDict(entry, resolve)
+                else -> throw PdfParseException("DecodeParms entries must be dictionaries")
+            }
+        }
+        else -> throw PdfParseException("/DecodeParms must be a dictionary or an array")
+    }
+}
+
+/**
+ * Applies an explicit filter chain in order (§7.4.2). Used by [decoded] and by
+ * the image decoder, which must stop before a trailing DCT/JPX stage.
+ * Unknown filters throw [PdfParseException]; callers wrap in runCatching.
+ */
+fun decodeFilterChain(
+    data: ByteArray,
+    names: List<String>,
+    params: List<PdfDict?>
+): DecodedBytes {
+    var bytes = data
+    val warnings = ArrayList<String>()
+    for ((index, name) in names.withIndex()) {
+        val filter = BY_NAME[name] ?: throw PdfParseException("Unsupported filter: $name")
+        val decoded = filter.decode(bytes, params.getOrNull(index))
+        bytes = decoded.bytes
+        decoded.warnings.mapTo(warnings) { "$name: $it" }
+    }
+    return DecodedBytes(bytes, warnings)
+}
+
 /**
  * Decodes a stream through its /Filter chain (§7.4.2), applying /DecodeParms
  * (or /DP) per filter. A single dict applies to the first filter; an array
@@ -52,39 +104,10 @@ private val BY_NAME: Map<String, PdfFilter> by lazy {
  * its input plus output (bounded; see [MAX_OUTPUT]).
  */
 fun PdfStream.decoded(resolve: (PdfRef) -> PdfObject? = { null }): Result<DecodedBytes> = runCatching {
-    val filterObj = dict["Filter"] ?: return@runCatching DecodedBytes(data, emptyList())
-    val names = when (filterObj) {
-        is PdfName -> listOf(filterObj.name)
-        is PdfArray -> filterObj.items.map {
-            (it as? PdfName)?.name ?: throw PdfParseException("/Filter chain entries must be names")
-        }
-        else -> throw PdfParseException("/Filter must be a name or an array of names")
-    }
+    val data = this.data
+    val names = filterNamesOf(dict)
     if (names.isEmpty()) return@runCatching DecodedBytes(data, emptyList())
-    val paramObj = dict["DecodeParms"] ?: dict["DP"]
-    val params: List<PdfDict?> = when (paramObj) {
-        null, is PdfNull -> List(names.size) { null }
-        is PdfDict -> listOf(paramObj) + List(maxOf(0, names.size - 1)) { null }
-        is PdfRef -> listOf(resolveDict(paramObj, resolve)) + List(maxOf(0, names.size - 1)) { null }
-        is PdfArray -> names.indices.map { i ->
-            when (val entry = paramObj.items.getOrNull(i)) {
-                null, is PdfNull -> null
-                is PdfDict -> entry
-                is PdfRef -> resolveDict(entry, resolve)
-                else -> throw PdfParseException("DecodeParms entries must be dictionaries")
-            }
-        }
-        else -> throw PdfParseException("/DecodeParms must be a dictionary or an array")
-    }
-    var bytes = data
-    val warnings = ArrayList<String>()
-    for ((index, name) in names.withIndex()) {
-        val filter = BY_NAME[name] ?: throw PdfParseException("Unsupported filter: $name")
-        val decoded = filter.decode(bytes, params[index])
-        bytes = decoded.bytes
-        decoded.warnings.mapTo(warnings) { "$name: $it" }
-    }
-    DecodedBytes(bytes, warnings)
+    decodeFilterChain(data, names, decodeParamsOf(dict, names.size, resolve))
 }
 
 private fun resolveDict(ref: PdfRef, resolve: (PdfRef) -> PdfObject?): PdfDict? =
