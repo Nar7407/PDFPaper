@@ -501,8 +501,13 @@ internal class PdfDocumentAssembler(
     }
 
     private fun checkNotEncrypted(doc: PdfDocument) {
+        // Reading encrypted files (with a password) is supported (T13), but
+        // writing would silently drop the protection, so it is refused until
+        // re-encryption is implemented.
         if (doc.file.trailer.raw.containsKey("Encrypt")) {
-            throw IllegalStateException("Encrypted PDFs are not supported yet (T13)")
+            throw IllegalStateException(
+                "Encrypted document: saving would remove its protection, which is not supported yet"
+            )
         }
     }
 

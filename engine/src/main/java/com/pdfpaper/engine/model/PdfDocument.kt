@@ -2,6 +2,8 @@ package com.pdfpaper.engine.model
 
 import com.pdfpaper.engine.filter.decoded
 import com.pdfpaper.engine.io.RandomAccessSource
+import com.pdfpaper.engine.security.PdfPermissions
+import com.pdfpaper.engine.security.StandardSecurityHandler
 import com.pdfpaper.engine.xref.EntryKind
 import com.pdfpaper.engine.xref.PdfFile
 import java.io.Closeable
@@ -13,13 +15,27 @@ import java.io.Closeable
  * (including cycles) always terminate: cycles resolve to null. Object streams
  * (§7.5.7) are unpacked on demand, decoding their filter chain (§7.4); a stream
  * that cannot be decoded resolves to null.
+ *
+ * When the file is encrypted (§7.6), [open] installs a
+ * [StandardSecurityHandler] and every string and stream is decrypted as its
+ * object is first loaded, so the rest of the engine only ever sees plaintext.
  */
 class PdfDocument private constructor(val file: PdfFile) : Closeable {
 
     private val cache = HashMap<Int, PdfObject?>()
     private val resolving = HashSet<Int>()
 
-    /** Raw stored object for [objNum] (may itself be a [PdfRef]); null when missing. */
+    /** Non-null when the document is encrypted; installed by [open]. */
+    internal var security: StandardSecurityHandler? = null
+        private set
+
+    /** True when the document is encrypted (§7.6). */
+    val isEncrypted: Boolean get() = security != null
+
+    /** `/P` permissions, or null when the document is not encrypted. */
+    val permissions: PdfPermissions? get() = security?.permissions
+
+    /** Raw stored (and decrypted) object for [objNum] (may itself be a [PdfRef]); null when missing. */
     fun deref(objNum: Int): PdfObject? {
         if (cache.containsKey(objNum)) return cache[objNum]
         if (!resolving.add(objNum)) {
@@ -35,11 +51,25 @@ class PdfDocument private constructor(val file: PdfFile) : Closeable {
                 }
                 EntryKind.COMPRESSED -> readFromObjectStream(entry.streamObjNum, entry.streamIndex, objNum)
             }
-            cache[objNum] = obj
-            return obj
+            // Objects stored in an object stream are already plaintext (the
+            // stream was decrypted as a whole); only uncompressed objects get
+            // their strings and stream data decrypted here.
+            val decrypted = if (entry.kind == EntryKind.UNCOMPRESSED) {
+                decryptIfNeeded(obj, objNum, entry.gen)
+            } else {
+                obj
+            }
+            cache[objNum] = decrypted
+            return decrypted
         } finally {
             resolving.remove(objNum)
         }
+    }
+
+    private fun decryptIfNeeded(obj: PdfObject?, objNum: Int, gen: Int): PdfObject? {
+        val handler = security ?: return obj
+        if (obj == null || objNum == handler.encryptObjNum) return obj
+        return handler.decrypt(obj, objNum, gen)
     }
 
     /** Follows [ref] (and any chained refs) to a concrete object; null on cycles or misses. */
@@ -90,8 +120,24 @@ class PdfDocument private constructor(val file: PdfFile) : Closeable {
     override fun close() = file.close()
 
     companion object {
-        fun open(source: RandomAccessSource): Result<PdfDocument> =
-            PdfFile.open(source).map { PdfDocument(it) }
+        /**
+         * Opens [source]. When the file is encrypted (§7.6), [password]
+         * (default empty) is used to authenticate; a wrong password fails with
+         * [com.pdfpaper.engine.security.PdfPasswordException] so callers can
+         * prompt instead of crashing.
+         */
+        fun open(source: RandomAccessSource, password: String = ""): Result<PdfDocument> =
+            runCatching {
+                val file = PdfFile.open(source).getOrThrow()
+                val document = PdfDocument(file)
+                try {
+                    document.security = StandardSecurityHandler.create(file, document, password)
+                } catch (t: Throwable) {
+                    document.close()
+                    throw t
+                }
+                document
+            }
     }
 }
 

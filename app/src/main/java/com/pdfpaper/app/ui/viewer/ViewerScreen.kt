@@ -65,6 +65,7 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.pdfpaper.app.ui.PasswordDialog
 import com.pdfpaper.engine.annot.AnnotationSpec
 import com.pdfpaper.engine.annot.HighlightSpec
 import com.pdfpaper.engine.annot.InkSpec
@@ -294,6 +295,15 @@ fun ViewerScreen(
                 viewModel.addNote(target.first, target.second, target.third, text)
                 noteTarget = null
             }
+        )
+    }
+
+    if (state.requiresPassword) {
+        PasswordDialog(
+            fileName = state.displayName,
+            incorrect = state.passwordError != null,
+            onDismiss = viewModel::cancelUnlock,
+            onSubmit = viewModel::unlock
         )
     }
 }

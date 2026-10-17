@@ -19,6 +19,7 @@ import com.pdfpaper.engine.page.pages
 import com.pdfpaper.engine.render.PageBox
 import com.pdfpaper.engine.render.PageGeometry
 import com.pdfpaper.engine.render.PageRenderPlan
+import com.pdfpaper.engine.security.PdfPasswordException
 import com.pdfpaper.engine.text.PageLayout
 import com.pdfpaper.engine.text.PageMatch
 import com.pdfpaper.engine.text.TextRect
@@ -47,7 +48,11 @@ data class ViewerUiState(
     val isLoading: Boolean = true,
     val displayName: String? = null,
     val pageCount: Int = 0,
-    val error: String? = null
+    val error: String? = null,
+    /** True when the document is encrypted and awaits a password (T13). */
+    val requiresPassword: Boolean = false,
+    /** Set after a rejected password attempt. */
+    val passwordError: String? = null
 )
 
 /** Text search state for the viewer (T11). */
@@ -147,6 +152,9 @@ class ViewerViewModel(application: Application) : AndroidViewModel(application) 
     private var pages: List<PdfPage> = emptyList()
     private var fieldsLoaded = false
 
+    /** Path of the document being viewed, kept so a password retry can reopen it. */
+    private var currentPath: String = ""
+
     private val cache = LruCache<Int, CachedPage>(bitmapBudgetBytes()) { it.bitmap.allocationByteCount.toLong() }
 
     /** Per-page text layouts; small and bounded, re-extracted if evicted. */
@@ -170,6 +178,20 @@ class ViewerViewModel(application: Application) : AndroidViewModel(application) 
     private val fontDir: File by lazy { File(getApplication<Application>().cacheDir, "embedded-fonts") }
 
     fun load(path: String) {
+        currentPath = path
+        openWith("")
+    }
+
+    /** Retries opening the current document with [password] (T13). */
+    fun unlock(password: String) = openWith(password)
+
+    /** Gives up on the password prompt. */
+    fun cancelUnlock() = _state.update {
+        it.copy(requiresPassword = false, passwordError = null, error = "Password required")
+    }
+
+    private fun openWith(password: String) {
+        val path = currentPath
         if (path.isBlank()) {
             _state.value = ViewerUiState(isLoading = false, error = "No file selected")
             return
@@ -179,7 +201,7 @@ class ViewerViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch {
             val opened = withContext(Dispatchers.IO) {
                 runCatching {
-                    val doc = PdfDocument.open(FileSource(File(path))).getOrThrow()
+                    val doc = PdfDocument.open(FileSource(File(path)), password).getOrThrow()
                     doc to doc.pages()
                 }
             }
@@ -195,11 +217,20 @@ class ViewerViewModel(application: Application) : AndroidViewModel(application) 
                     )
                 },
                 onFailure = { error ->
-                    _state.value = ViewerUiState(
-                        isLoading = false,
-                        displayName = File(path).name,
-                        error = error.message ?: "Cannot open this document"
-                    )
+                    if (error is PdfPasswordException) {
+                        _state.value = ViewerUiState(
+                            isLoading = false,
+                            displayName = File(path).name,
+                            requiresPassword = true,
+                            passwordError = if (password.isEmpty()) null else "Incorrect password"
+                        )
+                    } else {
+                        _state.value = ViewerUiState(
+                            isLoading = false,
+                            displayName = File(path).name,
+                            error = error.message ?: "Cannot open this document"
+                        )
+                    }
                 }
             )
         }

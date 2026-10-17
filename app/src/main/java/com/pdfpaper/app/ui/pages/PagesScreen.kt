@@ -49,6 +49,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.pdfpaper.app.data.copyPdfToCache
+import com.pdfpaper.app.ui.PasswordDialog
 import com.pdfpaper.engine.render.PageBox
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -173,6 +174,15 @@ fun PagesScreen(
                 onSplit = { viewModel.requestSplit(5) }
             )
         }
+    }
+
+    if (state.requiresPassword) {
+        PasswordDialog(
+            fileName = state.displayName,
+            incorrect = state.passwordError != null,
+            onDismiss = viewModel::cancelUnlock,
+            onSubmit = viewModel::unlock
+        )
     }
 }
 

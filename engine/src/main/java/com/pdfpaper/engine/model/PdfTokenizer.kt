@@ -47,9 +47,17 @@ internal fun tokenize(input: ByteArray): List<PdfToken> {
                     out += TDictStart(i, i + 2)
                     i += 2
                 } else {
-                    val (bytes, next) = readHex(input, i)
-                    out += THex(bytes, i, next)
-                    i = next
+                    val hex = tryReadHex(input, i)
+                    if (hex == null) {
+                        // Lone '<' (e.g. inside binary stream data): keep as a word
+                        // so data tokens can be skipped by position instead of
+                        // failing the whole object on non-hex bytes.
+                        out += TWord("<", i, i + 1)
+                        i++
+                    } else {
+                        out += THex(hex.first, i, hex.second)
+                        i = hex.second
+                    }
                 }
             }
             b == '>'.code.toByte() -> {
@@ -174,22 +182,27 @@ private fun readLiteral(input: ByteArray, start: Int): Pair<ByteArray, Int> {
     return buf.toByteArray() to i
 }
 
-/** Hexadecimal string (§7.3.4.3): whitespace ignored, odd length padded with 0. */
-private fun readHex(input: ByteArray, start: Int): Pair<ByteArray, Int> {
+/**
+ * Hexadecimal string (§7.3.4.3): whitespace ignored, odd length padded with 0.
+ * Returns null when the bytes cannot form a hex string (no `>` before the end,
+ * or a non-hex byte), so the caller can fall back to treating `<` as data — a
+ * ciphertext or image stream may legitimately contain stray `<` bytes.
+ */
+private fun tryReadHex(input: ByteArray, start: Int): Pair<ByteArray, Int>? {
     val digits = StringBuilder()
     var i = start + 1
     while (i < input.size && input[i] != '>'.code.toByte()) {
         val c = input[i]
-        if (c.isWs() || c == 0.toByte()) {
+        if (c.isWs()) {
             i++
         } else if (c.isHexDigitByte()) {
             digits.append(c.toInt().toChar())
             i++
         } else {
-            throw PdfParseException("Bad hex digit at byte $i")
+            return null
         }
     }
-    if (i >= input.size) throw PdfParseException("Unterminated hex string at byte $start")
+    if (i >= input.size) return null
     i++ // '>'
     if (digits.length % 2 == 1) digits.append('0')
     val out = ByteArray(digits.length / 2)

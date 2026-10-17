@@ -12,6 +12,7 @@ import com.pdfpaper.engine.page.PdfPage
 import com.pdfpaper.engine.page.pages
 import com.pdfpaper.engine.render.PageBox
 import com.pdfpaper.engine.render.PageGeometry
+import com.pdfpaper.engine.security.PdfPasswordException
 import com.pdfpaper.engine.util.LruCache
 import com.pdfpaper.engine.write.PdfPageOps
 import com.pdfpaper.engine.write.PdfPageSelection
@@ -52,7 +53,11 @@ data class PagesUiState(
     val canRedo: Boolean = false,
     val exporting: Boolean = false,
     val message: String? = null,
-    val pendingExport: PendingExport? = null
+    val pendingExport: PendingExport? = null,
+    /** True when the primary document is encrypted and awaits a password (T13). */
+    val requiresPassword: Boolean = false,
+    /** Set after a rejected password attempt. */
+    val passwordError: String? = null
 )
 
 /**
@@ -83,6 +88,9 @@ class PagesViewModel(application: Application) : AndroidViewModel(application) {
     private val docs = ArrayList<LoadedDocument>()
     private lateinit var history: PagePlanHistory
 
+    /** Path of the primary document, kept so a password retry can reopen it (T13). */
+    private var currentPath: String = ""
+
     private val renderScope = CoroutineScope(SupervisorJob() + Dispatchers.Default.limitedParallelism(1))
     private val renderJobs = HashMap<Int, Job>()
 
@@ -94,13 +102,26 @@ class PagesViewModel(application: Application) : AndroidViewModel(application) {
     private val fontDir: File by lazy { File(getApplication<Application>().cacheDir, "embedded-fonts") }
 
     fun load(path: String) {
+        currentPath = path
+        openPrimary(path, "")
+    }
+
+    /** Retries opening the primary document with [password] (T13). */
+    fun unlock(password: String) = openPrimary(currentPath, password)
+
+    /** Gives up on the password prompt. */
+    fun cancelUnlock() = _state.update {
+        it.copy(requiresPassword = false, passwordError = null, error = "Password required")
+    }
+
+    private fun openPrimary(path: String, password: String) {
         if (path.isBlank()) {
             _state.value = PagesUiState(isLoading = false, error = "No file selected")
             return
         }
         _state.value = PagesUiState(isLoading = true)
         viewModelScope.launch {
-            val opened = withContext(Dispatchers.IO) { runCatching { openDocument(path) } }
+            val opened = withContext(Dispatchers.IO) { runCatching { openDocument(path, password) } }
             opened.fold(
                 onSuccess = { doc ->
                     docs.clear()
@@ -110,7 +131,18 @@ class PagesViewModel(application: Application) : AndroidViewModel(application) {
                     _state.value = PagesUiState(isLoading = false, displayName = doc.name)
                 },
                 onFailure = { error ->
-                    _state.value = PagesUiState(isLoading = false, error = error.message ?: "Cannot open this document")
+                    if (error is PdfPasswordException) {
+                        _state.value = PagesUiState(
+                            isLoading = false,
+                            requiresPassword = true,
+                            passwordError = if (password.isEmpty()) null else "Incorrect password"
+                        )
+                    } else {
+                        _state.value = PagesUiState(
+                            isLoading = false,
+                            error = error.message ?: "Cannot open this document"
+                        )
+                    }
                 }
             )
         }
@@ -133,7 +165,15 @@ class PagesViewModel(application: Application) : AndroidViewModel(application) {
                     _state.update { it.copy(message = "Added ${doc.pages.size} page(s) from ${doc.name}") }
                 },
                 onFailure = { error ->
-                    _state.update { it.copy(message = error.message ?: "Could not open the second PDF") }
+                    _state.update {
+                        it.copy(
+                            message = if (error is PdfPasswordException) {
+                                "That document is password protected"
+                            } else {
+                                error.message ?: "Could not open the second PDF"
+                            }
+                        )
+                    }
                 }
             )
         }
@@ -345,8 +385,8 @@ class PagesViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun primary(): PdfDocument = docs.first().document
 
-    private fun openDocument(path: String): LoadedDocument {
-        val document = PdfDocument.open(FileSource(File(path))).getOrThrow()
+    private fun openDocument(path: String, password: String = ""): LoadedDocument {
+        val document = PdfDocument.open(FileSource(File(path)), password).getOrThrow()
         val pages = document.pages()
         return LoadedDocument(File(path).name, document, pages, pages.map { PageGeometry.boxOf(it) })
     }
