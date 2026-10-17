@@ -11,6 +11,11 @@ import com.pdfpaper.engine.page.PdfPage
 import com.pdfpaper.engine.page.pages
 import com.pdfpaper.engine.render.PageBox
 import com.pdfpaper.engine.render.PageGeometry
+import com.pdfpaper.engine.render.PageRenderPlan
+import com.pdfpaper.engine.text.PageLayout
+import com.pdfpaper.engine.text.PageMatch
+import com.pdfpaper.engine.text.TextRect
+import com.pdfpaper.engine.text.layout
 import com.pdfpaper.engine.util.LruCache
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -27,6 +32,7 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import kotlin.math.abs
 import kotlin.math.max
+import kotlin.math.min
 
 data class ViewerUiState(
     val isLoading: Boolean = true,
@@ -35,18 +41,40 @@ data class ViewerUiState(
     val error: String? = null
 )
 
-/** One cached page bitmap plus the pixel width it was rendered at. */
-private class CachedPage(val bitmap: Bitmap, val pixelWidth: Int)
+/** Text search state for the viewer (T11). */
+data class ViewerSearchState(
+    val query: String = "",
+    val matches: List<PageMatch> = emptyList(),
+    val activeIndex: Int = -1,
+    val running: Boolean = false
+) {
+    val activeMatch: PageMatch? get() = matches.getOrNull(activeIndex)
+}
+
+/** One page's current text selection (T11). */
+data class ViewerSelection(
+    val pageIndex: Int,
+    val start: Int,
+    val end: Int,
+    val rects: List<TextRect>,
+    val text: String
+)
+
+/** One cached page bitmap plus the render plan that produced it. */
+private class CachedPage(val plan: PageRenderPlan, val bitmap: Bitmap)
 
 /**
- * Viewer state for one document (T9).
+ * Viewer state for one document (T9). Rendering happens on a single-threaded
+ * background dispatcher: one page is rasterised at a time, which bounds peak
+ * memory and serialises access to the document's random-access source.
+ * Bitmaps of off-screen pages stay in a byte-bounded LRU cache; pending
+ * renders for pages that scrolled away are cancelled. Zoom is owned by the UI
+ * (it changes the requested pixel width), so a zoom change simply re-requests
+ * the visible pages.
  *
- * Rendering happens on a single-threaded background dispatcher: one page is
- * rasterised at a time, which bounds peak memory and serialises access to the
- * document's random-access source. Bitmaps of off-screen pages stay in a
- * byte-bounded LRU cache; pending renders for pages that scrolled away are
- * cancelled. Zoom is owned by the UI (it changes the requested pixel width),
- * so a zoom change simply re-requests the visible pages.
+ * T11 adds case-insensitive search over the extracted text and word/reading
+ * order selection. Text work shares the render dispatcher so the document is
+ * only ever touched by one thread; layouts are cached and bounded like bitmaps.
  */
 @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class) // limitedParallelism
 class ViewerViewModel(application: Application) : AndroidViewModel(application) {
@@ -61,6 +89,16 @@ class ViewerViewModel(application: Application) : AndroidViewModel(application) 
     private val _bitmaps = MutableStateFlow<Map<Int, Bitmap>>(emptyMap())
     val bitmaps: StateFlow<Map<Int, Bitmap>> = _bitmaps.asStateFlow()
 
+    /** Render plan per on-screen page: user space → bitmap pixels (T11 overlays). */
+    private val _plans = MutableStateFlow<Map<Int, PageRenderPlan>>(emptyMap())
+    val plans: StateFlow<Map<Int, PageRenderPlan>> = _plans.asStateFlow()
+
+    private val _search = MutableStateFlow(ViewerSearchState())
+    val search: StateFlow<ViewerSearchState> = _search.asStateFlow()
+
+    private val _selection = MutableStateFlow<ViewerSelection?>(null)
+    val selection: StateFlow<ViewerSelection?> = _selection.asStateFlow()
+
     /** Non-fatal problem worth showing (render failure, warning summary). */
     private val _message = MutableStateFlow<String?>(null)
     val message: StateFlow<String?> = _message.asStateFlow()
@@ -70,9 +108,22 @@ class ViewerViewModel(application: Application) : AndroidViewModel(application) 
 
     private val cache = LruCache<Int, CachedPage>(bitmapBudgetBytes()) { it.bitmap.allocationByteCount.toLong() }
 
-    private val renderScope = CoroutineScope(SupervisorJob() + Dispatchers.Default.limitedParallelism(1))
+    /** Per-page text layouts; small and bounded, re-extracted if evicted. */
+    private val layouts = LruCache<Int, PageLayout>(64)
+
+    /**
+     * One dispatcher for all document access: rendering and text extraction
+     * share the [PdfDocument], so they must never run at the same time.
+     */
+    private val documentDispatcher = Dispatchers.Default.limitedParallelism(1)
+    private val renderScope = CoroutineScope(SupervisorJob() + documentDispatcher)
+    private val textScope = CoroutineScope(SupervisorJob() + documentDispatcher)
     private val jobs = HashMap<Int, Job>()
     private val requestedWidths = HashMap<Int, Int>()
+    private var searchJob: Job? = null
+
+    /** First word of the current selection, to extend from (T11). */
+    private var selectionAnchor: Pair<Int, IntRange>? = null
 
     /** Embedded fonts are materialised here so android.graphics can load them. */
     private val fontDir: File by lazy { File(getApplication<Application>().cacheDir, "embedded-fonts") }
@@ -82,6 +133,7 @@ class ViewerViewModel(application: Application) : AndroidViewModel(application) 
             _state.value = ViewerUiState(isLoading = false, error = "No file selected")
             return
         }
+        clearTextState()
         _state.value = ViewerUiState(isLoading = true)
         viewModelScope.launch {
             val opened = withContext(Dispatchers.IO) {
@@ -121,8 +173,8 @@ class ViewerViewModel(application: Application) : AndroidViewModel(application) 
         val width = targetPixelWidth.coerceAtLeast(1)
 
         cache.get(index)?.let { cached ->
-            if (resolutionMatches(cached.pixelWidth, width)) {
-                publish(index, cached.bitmap)
+            if (resolutionMatches(cached.plan.pixelWidth, width)) {
+                publish(index, cached.plan, cached.bitmap)
                 return
             }
         }
@@ -143,8 +195,8 @@ class ViewerViewModel(application: Application) : AndroidViewModel(application) 
                 if (rendered.warnings.isNotEmpty()) {
                     _message.value = "Page ${index + 1}: ${rendered.warnings.first()}"
                 }
-                cache.put(index, CachedPage(rendered.bitmap, rendered.plan.pixelWidth))
-                publish(index, rendered.bitmap)
+                cache.put(index, CachedPage(rendered.plan, rendered.bitmap))
+                publish(index, rendered.plan, rendered.bitmap)
             }
             jobs.remove(index)
             requestedWidths.remove(index)
@@ -156,6 +208,111 @@ class ViewerViewModel(application: Application) : AndroidViewModel(application) 
         jobs.remove(index)?.cancel()
         requestedWidths.remove(index)
         _bitmaps.update { it - index }
+        _plans.update { it - index }
+    }
+
+    // ------------------------------------------------------------------ search
+
+    /**
+     * Searches the whole document for [query] (case-insensitive). A blank query
+     * clears the results. Results for an older query are dropped when a newer
+     * search finishes first.
+     */
+    fun setSearchQuery(query: String) {
+        searchJob?.cancel()
+        if (query.isBlank()) {
+            _search.value = ViewerSearchState(query = query)
+            return
+        }
+        clearSelection()
+        _search.value = ViewerSearchState(query = query, running = true)
+        searchJob = textScope.launch {
+            val found = ArrayList<PageMatch>()
+            for (index in pages.indices) {
+                if (!isActive || found.size >= MAX_MATCHES) break
+                val layout = layoutFor(index) ?: continue
+                for (match in layout.search(query, MAX_MATCHES - found.size)) {
+                    found += PageMatch(index, match)
+                }
+            }
+            if (!isActive) return@launch
+            _search.update { current ->
+                if (current.query != query) {
+                    current
+                } else {
+                    current.copy(
+                        matches = found,
+                        activeIndex = if (found.isEmpty()) -1 else 0,
+                        running = false
+                    )
+                }
+            }
+        }
+    }
+
+    fun nextMatch() = stepMatch(1)
+
+    fun previousMatch() = stepMatch(-1)
+
+    private fun stepMatch(delta: Int) {
+        _search.update { current ->
+            val count = current.matches.size
+            if (count == 0) {
+                current
+            } else {
+                val next = ((current.activeIndex + delta) % count + count) % count
+                current.copy(activeIndex = next)
+            }
+        }
+    }
+
+    // --------------------------------------------------------------- selection
+
+    /**
+     * Selects the word nearest the page point given as a fraction of the drawn
+     * page ([fractionX] across, [fractionY] down). With [extend] the selection
+     * grows from the anchor word to this one, following reading order.
+     */
+    fun selectAt(pageIndex: Int, fractionX: Float, fractionY: Float, extend: Boolean) {
+        val plan = _plans.value[pageIndex] ?: return
+        val inverse = plan.matrix.inverse() ?: return
+        val point = inverse.apply(
+            fractionX.toDouble() * plan.pixelWidth,
+            fractionY.toDouble() * plan.pixelHeight
+        )
+        textScope.launch {
+            val layout = layoutFor(pageIndex) ?: return@launch
+            val word = layout.wordAt(point[0], point[1])
+            if (word.isEmpty()) return@launch
+            val anchor = if (extend) {
+                selectionAnchor?.takeIf { it.first == pageIndex }?.second ?: word
+            } else {
+                word
+            }
+            selectionAnchor = pageIndex to anchor
+            val start = min(anchor.first, word.first)
+            val end = max(anchor.last, word.last) + 1
+            _selection.value = ViewerSelection(
+                pageIndex, start, end, layout.rectsFor(start, end), layout.text.substring(start, end)
+            )
+        }
+    }
+
+    /** Selects every character on [pageIndex]. */
+    fun selectAll(pageIndex: Int) {
+        textScope.launch {
+            val layout = layoutFor(pageIndex) ?: return@launch
+            if (layout.text.isEmpty()) return@launch
+            selectionAnchor = null
+            _selection.value = ViewerSelection(
+                pageIndex, 0, layout.text.length, layout.rectsFor(0, layout.text.length), layout.text
+            )
+        }
+    }
+
+    fun clearSelection() {
+        selectionAnchor = null
+        _selection.value = null
     }
 
     fun dismissMessage() {
@@ -164,16 +321,40 @@ class ViewerViewModel(application: Application) : AndroidViewModel(application) 
 
     override fun onCleared() {
         renderScope.cancel()
+        textScope.cancel()
         jobs.clear()
         _bitmaps.value = emptyMap()
+        _plans.value = emptyMap()
+        _selection.value = null
         cache.clear()
+        layouts.clear()
         document?.close()
         document = null
         pages = emptyList()
         super.onCleared()
     }
 
-    private fun publish(index: Int, bitmap: Bitmap) {
+    // ---------------------------------------------------------------- internals
+
+    /** Text layout of one page; must be called on the document dispatcher. */
+    private fun layoutFor(index: Int): PageLayout? {
+        layouts.get(index)?.let { return it }
+        val page = pages.getOrNull(index) ?: return null
+        val layout = page.layout()
+        layouts.put(index, layout)
+        return layout
+    }
+
+    private fun clearTextState() {
+        searchJob?.cancel()
+        _search.value = ViewerSearchState()
+        _selection.value = null
+        selectionAnchor = null
+        layouts.clear()
+    }
+
+    private fun publish(index: Int, plan: PageRenderPlan, bitmap: Bitmap) {
+        _plans.update { it + (index to plan) }
         _bitmaps.update { it + (index to bitmap) }
     }
 
@@ -182,6 +363,9 @@ class ViewerViewModel(application: Application) : AndroidViewModel(application) 
         abs(cachedWidth - targetWidth) <= max(16, targetWidth / 10)
 
     private companion object {
+        /** Upper bound on search hits kept for one query. */
+        const val MAX_MATCHES: Int = 1000
+
         /**
          * Bitmap budget: a sixth of the heap, clamped to 16..64 MB. Together
          * with one-page-at-a-time rendering this keeps a 500-page document
