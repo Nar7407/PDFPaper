@@ -460,17 +460,58 @@ class ViewerViewModel(application: Application) : AndroidViewModel(application) 
 
     /** Maps a tool id from All tools to the viewer's initial object mode. */
     fun startObjectEditing(toolId: String?) {
+        startViewerTool(
+            when (toolId) {
+                "text" -> "text"
+                "image" -> "image"
+                "highlight" -> "highlight"
+                "ink" -> "ink"
+                "note" -> "note"
+                else -> "select"
+            }
+        )
+    }
+
+    /**
+     * Opens the viewer mode for a tool chosen from the tools menu: object tools
+     * (add/edit text/image) switch the object tool, annotate tools switch the
+     * markup tool. Either way the viewer enters edit mode.
+     */
+    fun startViewerTool(mode: String) {
         _edit.update { it.copy(active = true) }
-        _objectEdit.update {
-            it.copy(
-                tool = when (toolId) {
-                    "text" -> ObjectEditTool.TEXT
-                    "image" -> ObjectEditTool.IMAGE
-                    else -> ObjectEditTool.SELECT
-                }
-            )
+        when (mode) {
+            "highlight" -> {
+                _edit.update { it.copy(tool = AnnotationTool.HIGHLIGHT) }
+                _objectEdit.update { it.copy(tool = ObjectEditTool.NONE, selectedId = null) }
+            }
+            "ink" -> {
+                _edit.update { it.copy(tool = AnnotationTool.INK) }
+                _objectEdit.update { it.copy(tool = ObjectEditTool.NONE, selectedId = null) }
+            }
+            "note" -> {
+                _edit.update { it.copy(tool = AnnotationTool.NOTE) }
+                _objectEdit.update { it.copy(tool = ObjectEditTool.NONE, selectedId = null) }
+            }
+            "text" -> _objectEdit.update { it.copy(tool = ObjectEditTool.TEXT, selectedId = null) }
+            "image" -> _objectEdit.update { it.copy(tool = ObjectEditTool.IMAGE, selectedId = null) }
+            else -> _objectEdit.update { it.copy(tool = ObjectEditTool.SELECT) }
         }
         ensureFieldsLoaded()
+    }
+
+    /** Undo for the top bar: object edits first, then the last annotation. */
+    fun undoAny() {
+        if (_objectEdit.value.canUndo) undoObjectEdit() else undoAnnotation()
+    }
+
+    /** Redo for the top bar (only object edits keep a redo stack). */
+    fun redoAny() {
+        if (_objectEdit.value.canRedo) redoObjectEdit()
+    }
+
+    /** Drops annotations added after [count]; used when a tool is cancelled. */
+    fun trimAnnotationsTo(count: Int) = _edit.update {
+        it.copy(annotations = it.annotations.take(count.coerceAtLeast(0)), inkDraft = null)
     }
 
     fun selectObject(id: String) = _objectEdit.update { it.copy(selectedId = id) }
@@ -745,6 +786,11 @@ class ViewerViewModel(application: Application) : AndroidViewModel(application) 
 
     fun dismissMessage() {
         _message.value = null
+    }
+
+    /** Shows a short snackbar message (used by the tools menu). */
+    fun showMessage(text: String) {
+        _message.value = text
     }
 
     override fun onCleared() {

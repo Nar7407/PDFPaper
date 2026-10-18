@@ -59,7 +59,7 @@ fun ToolDetailScreen(
     ) -> Unit,
     onOpenInfo: (path: String) -> Unit
 ) {
-    val tool = ToolCatalogue.byId(toolId)
+    val tool = ToolRegistry.byId(toolId)
     if (tool == null) {
         ToolMissing(onBack)
         return
@@ -70,7 +70,7 @@ fun ToolDetailScreen(
     val demoEngine = EditingRuntime.isDemo(context)
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
-    val editToolAvailable = !tool.requiresEditingEngine || demoEngine
+    val available = tool.isAvailable(demoEngine)
 
     val picker = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument()
@@ -83,16 +83,15 @@ fun ToolDetailScreen(
                     .onSuccess { cached ->
                         busy = false
                         val path = cached.file.absolutePath
-                        when (tool.action) {
-                            ToolAction.ORGANIZE -> onOpenOrganizer(path, tool.organizerHint)
-                            ToolAction.ANNOTATE -> onOpenViewer(path, true, false, null)
-                            ToolAction.FILL_FORM -> onOpenViewer(path, true, true, null)
-                            ToolAction.INFO -> onOpenInfo(path)
-                            ToolAction.ENCRYPT_INFO -> onOpenViewer(path, false, false, null)
-                            ToolAction.ADD_TEXT -> onOpenViewer(path, true, false, "text")
-                            ToolAction.EDIT_TEXT -> onOpenViewer(path, true, false, "select")
-                            ToolAction.ADD_IMAGE -> onOpenViewer(path, true, false, "image")
-                            ToolAction.EDIT_IMAGE -> onOpenViewer(path, true, false, "select")
+                        when (tool.destination) {
+                            ToolDestination.ORGANIZER -> onOpenOrganizer(path, tool.organizerHint)
+                            ToolDestination.INFO -> onOpenInfo(path)
+                            ToolDestination.VIEWER -> onOpenViewer(
+                                path,
+                                tool.viewerTool != null || tool.opensForms,
+                                tool.opensForms,
+                                tool.viewerTool
+                            )
                         }
                     }
                     .onFailure {
@@ -108,7 +107,7 @@ fun ToolDetailScreen(
         onBack = onBack,
         busy = busy,
         error = error,
-        editToolAvailable = editToolAvailable,
+        available = available,
         onPick = { picker.launch(arrayOf("application/pdf")) }
     )
 }
@@ -119,13 +118,13 @@ private fun ToolDetailContent(
     onBack: () -> Unit,
     busy: Boolean,
     error: String?,
-    editToolAvailable: Boolean,
+    available: Boolean,
     onPick: () -> Unit
 ) {
     Surface(modifier = Modifier.fillMaxSize().testTag(UiTags.TOOL_DETAIL_SCREEN)) {
         Column(modifier = Modifier.fillMaxSize()) {
             AppTopBar(
-                title = tool.title,
+                title = tool.name,
                 onBack = onBack,
                 titleTag = UiTags.TOOL_DETAIL_TITLE
             )
@@ -152,7 +151,7 @@ private fun ToolDetailContent(
                 }
                 Spacer(Modifier.height(16.dp))
                 Text(
-                    text = tool.title,
+                    text = tool.name,
                     style = MaterialTheme.typography.headlineSmall,
                     fontWeight = FontWeight.Bold
                 )
@@ -164,61 +163,23 @@ private fun ToolDetailContent(
                 )
 
                 Spacer(Modifier.height(20.dp))
-                when (tool.action) {
-                    ToolAction.ORGANIZE -> GuidanceCard(
-                        "How it works",
-                        tool.organizerHint ?: "Choose a PDF to open the page organizer."
-                    )
-                    ToolAction.ANNOTATE -> GuidanceCard(
-                        "How it works",
-                        "Choose a PDF to open the viewer in annotate mode. Highlight text, draw ink or place a note, then Save to write a new PDF."
-                    )
-                    ToolAction.FILL_FORM -> GuidanceCard(
-                        "How it works",
-                        "Choose a PDF to open its form fields. Enter text, tick boxes or pick choices, then Save to write a new PDF."
-                    )
-                    ToolAction.INFO -> GuidanceCard(
-                        "How it works",
-                        "Choose a PDF to see its page count, PDF version, encryption state, size and object count."
-                    )
-                    ToolAction.ENCRYPT_INFO -> EncryptInfo()
-                    ToolAction.ADD_TEXT -> GuidanceCard(
-                        "How it works",
-                        "Choose a PDF, tap Add text in the edit toolbar, then tap a page. Type the text and choose its font, size and colour. In this build FakeEngine simulates the edit."
-                    )
-                    ToolAction.EDIT_TEXT -> GuidanceCard(
-                        "How it works",
-                        "Choose a PDF, tap a text object to select it, then tap Edit text to change its content, font size and colour. Drag the box to move it and its corner handles to resize."
-                    )
-                    ToolAction.ADD_IMAGE -> GuidanceCard(
-                        "How it works",
-                        "Choose a PDF, tap Add image, pick a picture from the gallery, then tap the page to place it. Drag to move and use the corner handles to resize."
-                    )
-                    ToolAction.EDIT_IMAGE -> GuidanceCard(
-                        "How it works",
-                        "Choose a PDF and tap a picture to select it. Drag to move it, use the corner handles to resize, or replace and delete it from the selection bar."
-                    )
-                }
-                if (!editToolAvailable) {
+                GuidanceCard("How it works", guidanceFor(tool))
+                if (!available) {
                     Spacer(Modifier.height(12.dp))
                     GuidanceCard(
                         "Coming soon",
-                        "This tool needs the PDF engine's content-editing API. It is shown here so the planned workflow is discoverable, but it is disabled in this build."
+                        "This tool is shown here so the planned workflow is discoverable, " +
+                            "but nothing in this build can do it yet. It is disabled for now."
                     )
                 }
 
                 Spacer(Modifier.height(20.dp))
                 Button(
                     onClick = onPick,
-                    enabled = !busy && editToolAvailable,
+                    enabled = !busy && available,
                     modifier = Modifier.fillMaxWidth().height(52.dp)
                 ) {
-                    Text(
-                        when (tool.action) {
-                            ToolAction.ENCRYPT_INFO -> "Open protected PDF"
-                            else -> "Choose PDF"
-                        }
-                    )
+                    Text("Choose PDF")
                 }
                 if (busy) {
                     Spacer(Modifier.height(16.dp))
@@ -258,30 +219,26 @@ private fun GuidanceCard(title: String, body: String) {
     }
 }
 
-@Composable
-private fun EncryptInfo() {
-    Column {
-        GuidanceCard(
-            "Read protected PDFs",
-            "PDFPaper opens documents protected by the standard security handler (RC4, AES-128 and AES-256) and asks for the password when one is required."
-        )
-        Spacer(Modifier.height(12.dp))
-        OutlinedCard(modifier = Modifier.fillMaxWidth()) {
-            Column(modifier = Modifier.padding(16.dp)) {
-                Text(
-                    "Writing encryption is planned",
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.SemiBold
-                )
-                Text(
-                    "This build never writes encrypted files. Saving a protected document is refused so its protection is never silently dropped.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(top = 6.dp)
-                )
-            }
-        }
-    }
+/** The one-line "how it works" note shown on a tool's start screen. */
+private fun guidanceFor(tool: ToolDefinition): String = when (tool.id) {
+    "rotate", "reorder", "delete", "extract", "insert", "split", "merge" ->
+        tool.organizerHint ?: "Choose a PDF to open the page organizer."
+    "add-text" ->
+        "Choose a PDF, tap a page, then type. Pick the font, size and colour in the dialog."
+    "edit-text" ->
+        "Choose a PDF and tap a text object to select it, then Edit text to change its content, size and colour."
+    "add-image" ->
+        "Choose a PDF, pick a picture from the gallery, then tap the page to place it."
+    "edit-image" ->
+        "Choose a PDF and tap a picture to select it, then move, resize, replace or delete it."
+    "highlight", "draw", "note" ->
+        "Choose a PDF to open the viewer with the ${tool.name} tool ready."
+    "fill-form" ->
+        "Choose a PDF to open its form fields. Enter text, tick boxes or pick choices, then Save."
+    "info" ->
+        "Choose a PDF to see its page count, PDF version, encryption state, size and object count."
+    else ->
+        "Choose a PDF to open it, then open the tools menu (⋮) to use ${tool.name}."
 }
 
 @Composable
@@ -312,11 +269,11 @@ private fun ToolMissing(onBack: () -> Unit) {
 private fun ToolDetailScreenLightPreview() {
     PDFPaperTheme(darkTheme = false) {
         ToolDetailContent(
-            tool = ToolCatalogue.byId("add-text") ?: ToolCatalogue.tools.first(),
+            tool = ToolRegistry.byId("add-text") ?: ToolRegistry.tools.first(),
             onBack = {},
             busy = false,
             error = null,
-            editToolAvailable = true,
+            available = true,
             onPick = {}
         )
     }

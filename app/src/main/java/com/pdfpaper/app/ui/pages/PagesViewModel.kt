@@ -216,6 +216,21 @@ class PagesViewModel(application: Application) : AndroidViewModel(application) {
         commit { plan, selection -> PagePlan.moveDown(plan, selection) }
     }
 
+    /**
+     * Applies the page tool the organizer was opened for (from the viewer's
+     * tools menu) to the current selection. Tools that need a document picker
+     * (Merge, Insert) are handled by the screen, which owns the picker.
+     */
+    fun applyTool(toolId: String) {
+        when (toolId) {
+            "rotate" -> rotateSelection(90)
+            "reorder" -> moveSelectionUp()
+            "delete" -> deleteSelection()
+            "extract" -> requestSave(selectedOnly = true)
+            "split" -> requestSplit(5)
+        }
+    }
+
     fun undo() {
         if (history.undo()) publishPlan()
     }

@@ -31,7 +31,7 @@ class ToolSearchTest {
 
         composeRule.onNodeWithTag(UiTags.TOOL_SEARCH).performTextClearance()
         composeRule.onNodeWithTag(UiTags.TOOL_SEARCH).performTextInput("password")
-        composeRule.onNodeWithTag(UiTags.toolCard("encrypt")).assertIsDisplayed()
+        composeRule.onNodeWithTag(UiTags.toolCard("protect")).assertIsDisplayed()
         composeRule.onNodeWithTag(UiTags.toolCard("info")).assertDoesNotExist()
     }
 
@@ -42,6 +42,8 @@ class ToolSearchTest {
         composeRule.onNodeWithTag(UiTags.toolCard("merge")).assertDoesNotExist()
 
         composeRule.onNodeWithTag(UiTags.TOOL_SEARCH).performTextClearance()
+        composeRule.onNodeWithTag(UiTags.TOOL_GRID)
+            .performScrollToNode(hasTestTag(UiTags.toolCard("merge")))
         composeRule.onNodeWithTag(UiTags.toolCard("merge")).assertIsDisplayed()
         composeRule.onNodeWithTag(UiTags.TOOL_GRID)
             .performScrollToNode(hasTestTag(UiTags.toolCard("info")))

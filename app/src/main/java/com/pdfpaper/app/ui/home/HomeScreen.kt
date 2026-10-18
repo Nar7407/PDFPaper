@@ -42,8 +42,8 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.pdfpaper.app.ui.UiTags
 import com.pdfpaper.app.ui.theme.PDFPaperTheme
-import com.pdfpaper.app.ui.tools.ToolCatalogue
 import com.pdfpaper.app.ui.tools.ToolDefinition
+import com.pdfpaper.app.ui.tools.ToolRegistry
 
 @Composable
 fun HomeScreen(
@@ -112,8 +112,8 @@ private fun HomeContent(
                 TextButton(onClick = onBrowseTools) { Text("All tools") }
             }
             Spacer(Modifier.height(4.dp))
-            val recommended = listOf("merge", "annotate", "fill-form", "encrypt")
-                .mapNotNull { ToolCatalogue.byId(it) }
+            val recommended = listOf("merge", "highlight", "fill-form", "rotate")
+                .mapNotNull { ToolRegistry.byId(it) }
             recommended.chunked(2).forEach { rowTools ->
                 Row(
                     modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
@@ -274,7 +274,7 @@ private fun RecommendedToolCard(
             }
             Spacer(Modifier.height(12.dp))
             Text(
-                text = tool.title,
+                text = tool.name,
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold,
                 maxLines = 1

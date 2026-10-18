@@ -38,6 +38,7 @@ import com.pdfpaper.app.ui.home.HomeViewModel
 import com.pdfpaper.app.ui.pages.PagesScreen
 import com.pdfpaper.app.ui.recent.RecentScreen
 import com.pdfpaper.app.ui.tools.InfoScreen
+import com.pdfpaper.app.ui.tools.ToolRegistry
 import com.pdfpaper.app.ui.tools.ToolDetailScreen
 import com.pdfpaper.app.ui.tools.ToolsScreen
 import com.pdfpaper.app.ui.viewer.ViewerScreen
@@ -62,8 +63,8 @@ object Routes {
         "$VIEWER?path=${Uri.encode(path)}&edit=$startInEdit&forms=$startWithForms" +
             "&tool=${Uri.encode(startEditTool.orEmpty())}"
 
-    fun pages(path: String, hint: String? = null): String {
-        val base = "$PAGES?path=${Uri.encode(path)}"
+    fun pages(path: String, hint: String? = null, tool: String? = null): String {
+        val base = "$PAGES?path=${Uri.encode(path)}&tool=${Uri.encode(tool.orEmpty())}"
         return if (hint.isNullOrBlank()) base else "$base&hint=${Uri.encode(hint)}"
     }
 
@@ -199,11 +200,16 @@ fun AppNav(navController: NavHostController = rememberNavController()) {
                     startWithForms = entry.arguments?.getBoolean("forms") ?: false,
                     startEditTool = entry.arguments?.getString("tool").orEmpty(),
                     onBack = { navController.popBackStack() },
-                    onOrganize = { path -> navController.navigate(Routes.pages(path)) }
+                    onOrganize = { path, toolId ->
+                        navController.navigate(
+                            Routes.pages(path, ToolRegistry.byId(toolId.orEmpty())?.organizerHint, toolId)
+                        )
+                    },
+                    onOpenInfo = { path -> navController.navigate(Routes.info(path)) }
                 )
             }
             composable(
-                route = "${Routes.PAGES}?path={path}&hint={hint}",
+                route = "${Routes.PAGES}?path={path}&hint={hint}&tool={tool}",
                 arguments = listOf(
                     navArgument("path") {
                         type = NavType.StringType
@@ -212,12 +218,17 @@ fun AppNav(navController: NavHostController = rememberNavController()) {
                     navArgument("hint") {
                         type = NavType.StringType
                         defaultValue = ""
+                    },
+                    navArgument("tool") {
+                        type = NavType.StringType
+                        defaultValue = ""
                     }
                 )
             ) { entry ->
                 PagesScreen(
                     path = entry.arguments?.getString("path").orEmpty(),
                     hint = entry.arguments?.getString("hint"),
+                    toolId = entry.arguments?.getString("tool").orEmpty(),
                     onBack = { navController.popBackStack() }
                 )
             }

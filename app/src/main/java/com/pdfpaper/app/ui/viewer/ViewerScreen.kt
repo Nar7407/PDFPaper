@@ -3,6 +3,7 @@ package com.pdfpaper.app.ui.viewer
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
@@ -43,6 +44,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.Redo
 import androidx.compose.material.icons.automirrored.outlined.Undo
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.outlined.AddPhotoAlternate
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Draw
@@ -78,6 +81,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -103,6 +107,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
@@ -117,9 +122,13 @@ import com.pdfpaper.app.edit.EditableHandle
 import com.pdfpaper.app.edit.EditableObject
 import com.pdfpaper.app.edit.EditableObjectType
 import com.pdfpaper.app.edit.EditableStyle
+import com.pdfpaper.app.edit.EditingRuntime
 import com.pdfpaper.app.ui.PasswordDialog
 import com.pdfpaper.app.ui.UiTags
 import com.pdfpaper.app.ui.theme.PDFPaperTheme
+import com.pdfpaper.app.ui.tools.ToolDefinition
+import com.pdfpaper.app.ui.tools.ToolRegistry
+import com.pdfpaper.app.ui.tools.ToolSection
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import com.pdfpaper.engine.annot.AnnotationSpec
@@ -164,7 +173,8 @@ fun ViewerScreen(
     startWithForms: Boolean = false,
     startEditTool: String? = null,
     onBack: () -> Unit = {},
-    onOrganize: (String) -> Unit = {},
+    onOrganize: (path: String, toolId: String?) -> Unit = { _, _ -> },
+    onOpenInfo: (String) -> Unit = {},
     viewModel: ViewerViewModel = viewModel()
 ) {
     val state by viewModel.state.collectAsState()
@@ -186,6 +196,14 @@ fun ViewerScreen(
     var textTarget by remember { mutableStateOf<TextTarget?>(null) }
     var pendingImageUri by remember { mutableStateOf<Uri?>(null) }
     var replaceImageTarget by remember { mutableStateOf<EditableObject?>(null) }
+    var showTools by rememberSaveable { mutableStateOf(false) }
+    var activeToolId by rememberSaveable { mutableStateOf<String?>(null) }
+    // Annotation count when the current tool opened, so Cancel can undo its work.
+    var toolAnnotationStart by remember { mutableIntStateOf(0) }
+
+    val context = LocalContext.current
+    val demoEngine = EditingRuntime.isDemo(context)
+    val activeToolName = activeToolId?.let { ToolRegistry.byId(it)?.name }
 
     val imagePicker = rememberLauncherForActivityResult(
         ActivityResultContracts.GetContent()
@@ -236,6 +254,7 @@ fun ViewerScreen(
                 viewModel.setEditMode(true)
             } else {
                 viewModel.startObjectEditing(startEditTool)
+                activeToolId = ToolRegistry.byViewerTool(startEditTool)?.id
             }
             if (startWithForms) showForms = true
         }
@@ -266,25 +285,77 @@ fun ViewerScreen(
         if (activeMatch != null) listState.animateScrollToItem(activeMatch.pageIndex)
     }
 
+    // Leaving the active tool keeps its work; cancelling drops what the tool
+    // session added. Either way the viewer leaves edit mode.
+    val closeTool = {
+        activeToolId = null
+        viewModel.setEditMode(false)
+    }
+    val cancelTool = {
+        viewModel.trimAnnotationsTo(toolAnnotationStart)
+        activeToolId = null
+        viewModel.setEditMode(false)
+    }
+    val activateTool: (ToolDefinition) -> Unit = { tool ->
+        showTools = false
+        when (tool.section) {
+            ToolSection.PAGES -> onOrganize(path, tool.id)
+            ToolSection.EDIT, ToolSection.ANNOTATE -> {
+                toolAnnotationStart = edit.annotations.size
+                viewModel.startViewerTool(tool.viewerTool ?: "select")
+                activeToolId = tool.id
+            }
+            ToolSection.FORMS_SECURITY ->
+                if (tool.id == "fill-form") {
+                    toolAnnotationStart = edit.annotations.size
+                    viewModel.startViewerTool("select")
+                    showForms = true
+                    activeToolId = tool.id
+                } else {
+                    viewModel.showMessage("${tool.name} is coming soon")
+                }
+            ToolSection.DOCUMENT -> when (tool.id) {
+                "info" -> onOpenInfo(path)
+                "save", "save-as" -> viewModel.saveAll()
+                "share" -> sharePdf(context, path, state.displayName)
+                else -> viewModel.showMessage("${tool.name} is coming soon")
+            }
+        }
+    }
+    // Back exits the sheet, then the active tool, and only then the document.
+    BackHandler(enabled = showTools || activeToolId != null) {
+        if (showTools) showTools = false else closeTool()
+    }
+
     Surface(modifier = Modifier.fillMaxSize()) {
         Column(modifier = Modifier.fillMaxSize()) {
             ViewerToolbar(
                 title = state.displayName ?: "PDF",
-                pageLabel = if (state.pageCount > 0) "${state.pageCount} pages" else null,
+                subtitle = activeToolName
+                    ?: if (state.pageCount > 0) "${state.pageCount} pages" else null,
                 zoom = zoom,
                 findActive = showSearch,
-                editActive = edit.active,
-                onBack = onBack,
+                canUndo = objectEdit.canUndo || edit.annotations.isNotEmpty(),
+                canRedo = objectEdit.canRedo,
+                onBack = {
+                    when {
+                        showTools -> showTools = false
+                        activeToolId != null -> closeTool()
+                        else -> onBack()
+                    }
+                },
                 onZoomIn = { zoom = (zoom * 1.25f).coerceAtMost(MAX_ZOOM) },
                 onZoomOut = { zoom = (zoom / 1.25f).coerceAtLeast(MIN_ZOOM) },
                 onFit = { zoom = 1f },
                 onFind = { showSearch = !showSearch },
-                onEdit = { viewModel.setEditMode(!edit.active) },
-                onOrganize = { onOrganize(path) }
+                onUndo = viewModel::undoAny,
+                onRedo = viewModel::redoAny,
+                onMore = { showTools = true }
             )
 
             if (edit.active) {
                 EditBar(
+                    toolName = activeToolName,
                     objectState = objectEdit,
                     markupTool = edit.tool,
                     annotationCount = edit.annotations.size,
@@ -300,7 +371,9 @@ fun ViewerScreen(
                     onUndoMarkup = viewModel::undoAnnotation,
                     onClearMarkup = viewModel::clearAnnotations,
                     onSave = viewModel::saveAll,
-                    onToggleForms = { showForms = !showForms }
+                    onToggleForms = { showForms = !showForms },
+                    onDone = closeTool,
+                    onCancel = cancelTool
                 )
                 if (showForms) {
                     FormPanel(
@@ -480,6 +553,21 @@ fun ViewerScreen(
         )
     }
 
+    if (showTools) {
+        ViewerToolsSheet(
+            fileName = state.displayName ?: "PDF",
+            demoEngine = demoEngine,
+            onDismiss = { showTools = false },
+            onSelect = activateTool,
+            // The sheet covers the snackbar host, so close it before reporting
+            // that the tool is not available yet.
+            onUnavailable = { tool ->
+                showTools = false
+                viewModel.showMessage("${tool.name} is coming soon")
+            }
+        )
+    }
+
     if (state.requiresPassword) {
         PasswordDialog(
             fileName = state.displayName,
@@ -493,20 +581,22 @@ fun ViewerScreen(
 @Composable
 private fun ViewerToolbar(
     title: String,
-    pageLabel: String?,
+    subtitle: String?,
     zoom: Float,
     findActive: Boolean,
-    editActive: Boolean,
+    canUndo: Boolean,
+    canRedo: Boolean,
     onBack: () -> Unit,
     onZoomIn: () -> Unit,
     onZoomOut: () -> Unit,
     onFit: () -> Unit,
     onFind: () -> Unit,
-    onEdit: () -> Unit,
-    onOrganize: () -> Unit
+    onUndo: () -> Unit,
+    onRedo: () -> Unit,
+    onMore: () -> Unit
 ) {
     Surface(color = MaterialTheme.colorScheme.surface, modifier = Modifier.fillMaxWidth()) {
-        Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 8.dp)) {
+        Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 6.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
@@ -519,12 +609,37 @@ private fun ViewerToolbar(
                 }
                 Column(modifier = Modifier.weight(1f)) {
                     Text(title, style = MaterialTheme.typography.titleMedium, maxLines = 1)
-                    if (pageLabel != null) {
-                        Text(pageLabel, style = MaterialTheme.typography.labelSmall)
+                    if (subtitle != null) {
+                        Text(subtitle, style = MaterialTheme.typography.labelSmall, maxLines = 1)
                     }
                 }
-                Text("${(zoom * 100).roundToInt()}%", style = MaterialTheme.typography.labelLarge)
-                TextButton(onClick = onFit) { Text("Fit") }
+                IconButton(onClick = onFind) {
+                    Icon(
+                        imageVector = Icons.Filled.Search,
+                        contentDescription = if (findActive) "Close search" else "Search"
+                    )
+                }
+                IconButton(onClick = onUndo, enabled = canUndo) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Outlined.Undo,
+                        contentDescription = "Undo"
+                    )
+                }
+                IconButton(onClick = onRedo, enabled = canRedo) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Outlined.Redo,
+                        contentDescription = "Redo"
+                    )
+                }
+                IconButton(
+                    onClick = onMore,
+                    modifier = Modifier.testTag(UiTags.VIEWER_TOOLS_BUTTON)
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.MoreVert,
+                        contentDescription = "More tools"
+                    )
+                }
             }
             Row(
                 modifier = Modifier
@@ -533,10 +648,9 @@ private fun ViewerToolbar(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 TextButton(onClick = onZoomOut) { Text("−") }
+                Text("${(zoom * 100).roundToInt()}%", style = MaterialTheme.typography.labelLarge)
                 TextButton(onClick = onZoomIn) { Text("+") }
-                TextButton(onClick = onFind) { Text(if (findActive) "Close" else "Find") }
-                TextButton(onClick = onEdit) { Text(if (editActive) "Done" else "Edit") }
-                TextButton(onClick = onOrganize) { Text("Organize") }
+                TextButton(onClick = onFit) { Text("Fit") }
             }
         }
     }
@@ -544,6 +658,7 @@ private fun ViewerToolbar(
 
 @Composable
 private fun EditBar(
+    toolName: String?,
     objectState: ObjectEditState,
     markupTool: AnnotationTool,
     annotationCount: Int,
@@ -559,10 +674,37 @@ private fun EditBar(
     onUndoMarkup: () -> Unit,
     onClearMarkup: () -> Unit,
     onSave: () -> Unit,
-    onToggleForms: () -> Unit
+    onToggleForms: () -> Unit,
+    onDone: () -> Unit,
+    onCancel: () -> Unit
 ) {
-    Surface(color = MaterialTheme.colorScheme.surface, modifier = Modifier.fillMaxWidth()) {
+    Surface(
+        color = MaterialTheme.colorScheme.surface,
+        modifier = Modifier.fillMaxWidth().testTag(UiTags.VIEWER_TOOL_MODE_BAR)
+    ) {
         Column {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 12.dp, end = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = toolName ?: "Edit",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    modifier = Modifier.weight(1f)
+                )
+                TextButton(
+                    onClick = onCancel,
+                    modifier = Modifier.testTag(UiTags.VIEWER_TOOL_CANCEL)
+                ) { Text("Cancel") }
+                TextButton(
+                    onClick = onDone,
+                    modifier = Modifier.testTag(UiTags.VIEWER_TOOL_DONE)
+                ) { Text("Done") }
+            }
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -1631,19 +1773,22 @@ private fun ViewerEditModeLightPreview() {
         Column(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
             ViewerToolbar(
                 title = "Project notes.pdf",
-                pageLabel = "1 / 8",
+                subtitle = "Edit text",
                 zoom = 1f,
                 findActive = false,
-                editActive = true,
+                canUndo = true,
+                canRedo = false,
                 onBack = {},
                 onZoomIn = {},
                 onZoomOut = {},
                 onFit = {},
                 onFind = {},
-                onEdit = {},
-                onOrganize = {}
+                onUndo = {},
+                onRedo = {},
+                onMore = {}
             )
             EditBar(
+                toolName = "Edit text",
                 objectState = objectState,
                 markupTool = AnnotationTool.HIGHLIGHT,
                 annotationCount = 2,
@@ -1659,7 +1804,9 @@ private fun ViewerEditModeLightPreview() {
                 onUndoMarkup = {},
                 onClearMarkup = {},
                 onSave = {},
-                onToggleForms = {}
+                onToggleForms = {},
+                onDone = {},
+                onCancel = {}
             )
             Box(modifier = Modifier.fillMaxWidth().weight(1f).padding(12.dp)) {
                 Box(modifier = Modifier.fillMaxSize().background(Color.White)) {

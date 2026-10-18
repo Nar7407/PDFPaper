@@ -26,7 +26,16 @@ object UiTags {
     const val EDIT_SAVE = "edit_save"
     const val EDIT_OBJECT_BAR = "edit_object_bar"
 
+    const val VIEWER_TOOLS_BUTTON = "viewer_tools_button"
+    const val VIEWER_TOOLS_SHEET = "viewer_tools_sheet"
+    const val VIEWER_TOOLS_SEARCH = "viewer_tools_search"
+    const val VIEWER_TOOL_MODE_BAR = "viewer_tool_mode_bar"
+    const val VIEWER_TOOL_DONE = "viewer_tool_done"
+    const val VIEWER_TOOL_CANCEL = "viewer_tool_cancel"
+
     fun toolCard(id: String): String = "tool_card_$id"
+
+    fun viewerToolItem(id: String): String = "viewer_tool_item_$id"
 
     fun objectBox(id: String): String = "object_$id"
 }

@@ -51,7 +51,7 @@ import com.pdfpaper.app.ui.theme.PDFPaperTheme
 @Composable
 fun ToolsScreen(onOpenTool: (ToolDefinition) -> Unit) {
     var query by rememberSaveable { mutableStateOf("") }
-    val results = ToolCatalogue.search(query)
+    val results = ToolRegistry.search(query)
     val demoEngine = EditingRuntime.isDemo(LocalContext.current)
 
     Surface(
@@ -119,18 +119,18 @@ fun ToolsScreen(onOpenTool: (ToolDefinition) -> Unit) {
                     ),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    ToolCatalogue.grouped(results).forEach { (group, tools) ->
-                        item(key = "group-${group.name}") {
-                            ToolGroupHeader(group.label)
+                    ToolRegistry.grouped(results).forEach { (section, tools) ->
+                        item(key = "group-${section.name}") {
+                            ToolGroupHeader(section.label)
                         }
                         items(tools, key = { it.id }) { tool ->
-                            val available = !tool.requiresEditingEngine || demoEngine
+                            val available = tool.isAvailable(demoEngine)
                             ToolRow(
                                 tool = tool,
                                 enabled = available,
                                 badge = when {
-                                    tool.requiresEditingEngine && !available -> "Coming soon"
-                                    tool.requiresEditingEngine -> "Demo"
+                                    !available -> "Coming soon"
+                                    tool.needsEditingEngine -> "Demo"
                                     else -> null
                                 },
                                 onClick = { if (available) onOpenTool(tool) }
@@ -195,7 +195,7 @@ private fun ToolRow(
             Column(modifier = Modifier.weight(1f).padding(horizontal = 14.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        text = tool.title,
+                        text = tool.name,
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold,
                         modifier = Modifier.weight(1f, fill = false)

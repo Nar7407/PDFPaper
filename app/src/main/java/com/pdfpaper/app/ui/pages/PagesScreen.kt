@@ -25,6 +25,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -56,6 +57,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.pdfpaper.app.data.copyPdfToCache
 import com.pdfpaper.app.ui.PasswordDialog
 import com.pdfpaper.app.ui.theme.PDFPaperTheme
+import com.pdfpaper.app.ui.tools.ToolRegistry
 import com.pdfpaper.engine.render.PageBox
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -74,6 +76,7 @@ import kotlinx.coroutines.withContext
 fun PagesScreen(
     path: String,
     hint: String? = null,
+    toolId: String = "",
     onBack: () -> Unit = {},
     viewModel: PagesViewModel = viewModel()
 ) {
@@ -81,6 +84,7 @@ fun PagesScreen(
     val plan by viewModel.plan.collectAsState()
     val boxes by viewModel.boxes.collectAsState()
     val thumbs by viewModel.thumbs.collectAsState()
+    val tool = ToolRegistry.byId(toolId)
 
     val snackbar = remember { SnackbarHostState() }
     val context = LocalContext.current
@@ -127,7 +131,7 @@ fun PagesScreen(
     Surface(modifier = Modifier.fillMaxSize()) {
         Column(modifier = Modifier.fillMaxSize()) {
             OrganizerToolbar(
-                title = state.displayName ?: "Organize",
+                title = tool?.name ?: (state.displayName ?: "Organize"),
                 pageCount = plan.size,
                 selectedCount = state.selection.size,
                 canUndo = state.canUndo,
@@ -175,6 +179,13 @@ fun PagesScreen(
 
             OrganizerActions(
                 enabled = !state.isLoading && state.error == null && plan.isNotEmpty(),
+                applyLabel = tool?.let { "Apply ${it.name}" },
+                onApply = {
+                    when (toolId) {
+                        "merge", "insert" -> openDoc.launch(arrayOf("application/pdf"))
+                        else -> viewModel.applyTool(toolId)
+                    }
+                },
                 onRotateLeft = { viewModel.rotateSelection(-90) },
                 onRotateRight = { viewModel.rotateSelection(90) },
                 onMoveUp = viewModel::moveSelectionUp,
@@ -243,6 +254,8 @@ private fun OrganizerToolbar(
 @Composable
 private fun OrganizerActions(
     enabled: Boolean,
+    applyLabel: String? = null,
+    onApply: () -> Unit = {},
     onRotateLeft: () -> Unit,
     onRotateRight: () -> Unit,
     onMoveUp: () -> Unit,
@@ -261,6 +274,9 @@ private fun OrganizerActions(
                 .padding(horizontal = 8.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
+            if (applyLabel != null) {
+                Button(onClick = onApply, enabled = enabled) { Text(applyLabel) }
+            }
             TextButton(onClick = onRotateLeft, enabled = enabled) { Text("⟲ 90") }
             TextButton(onClick = onRotateRight, enabled = enabled) { Text("⟳ 90") }
             TextButton(onClick = onMoveUp, enabled = enabled) { Text("↑") }
