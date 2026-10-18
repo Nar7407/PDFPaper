@@ -43,8 +43,10 @@ internal data class FileResult(
  */
 fun main(args: Array<String>) {
     require(args.size == 2) { "Usage: CorpusCheck <testdataDir> <reportFile>" }
-    val dir = File(args[0])
-    val reportFile = File(args[1])
+    runCorpusCheck(File(args[0]), File(args[1]))
+}
+
+internal fun runCorpusCheck(dir: File, reportFile: File) {
     val pdfs = dir.listFiles { file -> file.isFile && file.name.endsWith(".pdf", ignoreCase = true) }
         ?.sortedBy { it.name }
         ?: emptyList()

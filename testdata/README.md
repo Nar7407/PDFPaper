@@ -1,6 +1,6 @@
 # Test corpus (/testdata)
 
-10 small self-made PDFs (no real-world content, no copyrighted material).
+11 small self-made PDFs (no real-world content, no copyrighted material).
 Regenerate deterministically with:
 
 ```
@@ -19,6 +19,7 @@ python testdata/generate.py
 | `crlf-endings.pdf` | CRLF line endings throughout |
 | `leading-comment.pdf` | Comment line before `%PDF-` header |
 | `rebuilt-filtered-xref-stream.pdf` | Flate-compressed xref stream (undecodable until T5) → rebuild scan |
+| `text-and-graphics.pdf` | Text, filled rectangle and stroked line; exercises text extraction and the display list |
 
 Run `:engine:corpusCheck` to open every `*.pdf` here and write
 `engine/build/corpus-report.txt`. Only `*.pdf` files are opened, so this

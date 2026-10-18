@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate the 10 self-made PDFs in /testdata (T3).
+"""Generate the 11 self-made PDFs in /testdata (T3).
 
 All files are hand-built byte-by-byte (no real-world content, no copyrighted
 material) to exercise different engine paths: classic xref, xref streams,
@@ -137,6 +137,36 @@ def main():
     # via the rebuild fallback.
     files["rebuilt-filtered-xref-stream.pdf"] = xref_stream(
         [(1, 0, CATALOG), (2, 0, PAGES1), (3, 0, PAGE)], filtered=True)
+
+    # 11. Text and graphics: exercises text extraction and the display list.
+    content = (
+        "BT\n"
+        "/F1 24 Tf\n"
+        "72 720 Td\n"
+        "(Hello PDFPaper) Tj\n"
+        "ET\n"
+        "0 0 1 rg\n"
+        "100 100 200 150 re\n"
+        "f\n"
+        "0 0 0 RG\n"
+        "2 w\n"
+        "50 50 m\n"
+        "250 50 l\n"
+        "S\n"
+    )
+    text_page = (
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
+        "/Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>"
+    )
+    font = "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>"
+    files["text-and-graphics.pdf"] = classic([
+        (1, 0, CATALOG),
+        (2, 0, PAGES1),
+        (3, 0, text_page),
+        (4, 0, "<< /Length %d >>\nstream\n%s\nendstream"
+            % (len(content.encode("ascii")), content)),
+        (5, 0, font),
+    ])
 
     for name in sorted(files):
         path = os.path.join(HERE, name)
