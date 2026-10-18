@@ -6,16 +6,19 @@ import com.pdfpaper.engine.model.PdfDocument
 import com.pdfpaper.engine.model.PdfRef
 import com.pdfpaper.engine.model.PdfStream
 import com.pdfpaper.engine.filter.decoded
+import com.pdfpaper.engine.graphics.DisplayList
 import com.pdfpaper.engine.graphics.buildDisplayList
 import com.pdfpaper.engine.page.PageTreeResult
+import com.pdfpaper.engine.page.PdfPage
 import com.pdfpaper.engine.page.pageTree
 import com.pdfpaper.engine.page.pages
+import com.pdfpaper.engine.text.PageText
 import com.pdfpaper.engine.text.extractText
 import com.pdfpaper.engine.write.PdfPageOps
 import com.pdfpaper.engine.write.PdfPageSelection
 import java.io.File
 
-private data class FileResult(
+internal data class FileResult(
     val name: String,
     val ok: Boolean,
     val objects: Int,
@@ -86,7 +89,11 @@ fun main(args: Array<String>) {
     println("Report: ${reportFile.absolutePath}")
 }
 
-private fun checkOne(file: File): FileResult {
+internal fun checkOne(
+    file: File,
+    extractText: (PdfPage) -> PageText = { it.extractText() },
+    buildDisplayList: (PdfPage) -> DisplayList = { it.buildDisplayList() }
+): FileResult {
     return try {
         val result = PdfDocument.open(FileSource(file))
         result.fold(
@@ -110,6 +117,7 @@ private fun checkOne(file: File): FileResult {
                             if (ok) decoded++
                         }
                     }
+                    var pageFailure: String? = null
                     val pageInfos = try {
                         val tree = pageTree(it) as? PageTreeResult.Ok
                         val ps = tree?.pages ?: emptyList()
@@ -119,8 +127,9 @@ private fun checkOne(file: File): FileResult {
                         var images = 0
                         for (p in ps) {
                             val t = try {
-                                p.extractText()
+                                extractText(p)
                             } catch (t: Throwable) {
+                                pageFailure = pageFailure ?: "text: ${shortReason(t)}"
                                 null
                             }
                             if (t != null && t.runs.isNotEmpty()) {
@@ -129,8 +138,9 @@ private fun checkOne(file: File): FileResult {
                             }
                             // T8: building the display list must never crash.
                             val dl = try {
-                                p.buildDisplayList()
+                                buildDisplayList(p)
                             } catch (t: Throwable) {
+                                pageFailure = pageFailure ?: "display: ${shortReason(t)}"
                                 null
                             }
                             if (dl != null) {
@@ -140,6 +150,7 @@ private fun checkOne(file: File): FileResult {
                         }
                         Triple(ps.size, runs to textPages, commands to images)
                     } catch (t: Throwable) {
+                        pageFailure = pageFailure ?: "pages: ${shortReason(t)}"
                         Triple(0, 0 to 0, 0 to 0)
                     }
                     val (pages, runsInfo, drawInfo) = pageInfos
@@ -154,9 +165,9 @@ private fun checkOne(file: File): FileResult {
                         false
                     }
                     FileResult(
-                        file.name, true, it.file.objectCount, it.file.rebuiltFromScan,
+                        file.name, pageFailure == null, it.file.objectCount, it.file.rebuiltFromScan,
                         total, decoded, pages, runsInfo.first, runsInfo.second,
-                        drawInfo.first, drawInfo.second, roundTrip, ""
+                        drawInfo.first, drawInfo.second, roundTrip, pageFailure ?: ""
                     )
                 }
             },
