@@ -2,6 +2,8 @@ package com.pdfpaper.engine.write
 
 import com.pdfpaper.engine.annot.AnnotationSpec
 import com.pdfpaper.engine.annot.AnnotationWriter
+import com.pdfpaper.engine.edit.PageEdit
+import com.pdfpaper.engine.edit.PageEditApplier
 import com.pdfpaper.engine.form.FormFiller
 import com.pdfpaper.engine.model.PdfArray
 import com.pdfpaper.engine.model.PdfDict
@@ -64,7 +66,9 @@ internal class PdfDocumentAssembler(
     /** New annotations to add, grouped by source page index (T12). */
     private val additions: List<AnnotationSpec> = emptyList(),
     /** AcroForm field values to write, by fully-qualified name (T12). */
-    private val formValues: Map<String, String> = emptyMap()
+    private val formValues: Map<String, String> = emptyMap(),
+    /** Page edits to apply while copying the primary document's pages (T17). */
+    private val edits: List<PageEdit> = emptyList()
 ) {
 
     private val builder = PdfDocumentBuilder(version)
@@ -75,6 +79,7 @@ internal class PdfDocumentAssembler(
     private val rawNames = LinkedHashMap<String, PdfObject>()
     private val keptNames = HashSet<String>()
     private val additionsByPage: Map<Int, List<AnnotationSpec>> = additions.groupBy { it.pageIndex }
+    private val editsByPage: Map<Int, List<PageEdit>> = edits.groupBy { it.pageIndex }
     private val annotationWriter: AnnotationWriter by lazy { AnnotationWriter(builder) }
 
     fun assemble(): ByteArray {
@@ -154,14 +159,23 @@ internal class PdfDocumentAssembler(
         val copier = copierFor(doc)
         val src = page.dict
 
-        val base = copier.copyDict(src, skipKeys = setOf("Parent", "Annots")) ?: PdfDict(emptyMap())
+        val pageEdits = if (doc === primary) editsByPage[selection.pageIndex].orEmpty() else emptyList()
+        val edited = pageEdits.isNotEmpty()
+        val skipKeys = if (edited) {
+            setOf("Parent", "Annots", "Resources", "Contents")
+        } else {
+            setOf("Parent", "Annots")
+        }
+        val base = copier.copyDict(src, skipKeys = skipKeys) ?: PdfDict(emptyMap())
         val entries = LinkedHashMap(base.entries)
         entries[PdfName("Type")] = PdfName("Page")
         entries[PdfName("Parent")] = pagesRef
         materialise(entries, copier, "MediaBox", src["MediaBox"] ?: page.mediaBox)
         materialise(entries, copier, "CropBox", src["CropBox"] ?: page.cropBox)
         materialise(entries, copier, "Rotate", src["Rotate"] ?: inheritedRotate(page))
-        materialise(entries, copier, "Resources", src["Resources"] ?: page.resources)
+        if (!edited) {
+            materialise(entries, copier, "Resources", src["Resources"] ?: page.resources)
+        }
 
         val existingAnnots = src["Annots"]?.let { copyAnnots(copier, it) }
         val extras = if (doc === primary) additionsByPage[selection.pageIndex] else null
@@ -176,6 +190,9 @@ internal class PdfDocumentAssembler(
         if (selection.rotationDelta % 360 != 0) {
             entries[PdfName("Rotate")] =
                 PdfInteger(normalizeRotation(page.rotate + selection.rotationDelta).toLong())
+        }
+        if (edited) {
+            PageEditApplier(builder, copier, page, pageEdits).apply(entries)
         }
         builder.put(ref.objNum, PdfDict(entries))
     }

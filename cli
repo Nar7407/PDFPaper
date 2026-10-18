@@ -1,0 +1,29 @@
+#!/usr/bin/env sh
+set -eu
+
+usage() {
+    echo "Usage: cli fontinfo <file.pdf> --page <n>" >&2
+    echo "       cli add-text|add-image|list-images|move-image|replace-image|delete-image ..." >&2
+    exit 2
+}
+
+root=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+
+if [ "$#" -eq 0 ]; then
+    usage
+fi
+
+case "$1" in
+    fontinfo)
+        if [ "$#" -ne 4 ] || [ "$3" != "--page" ]; then
+            usage
+        fi
+        exec "$root/gradlew" -q :engine:fontinfo -PfontinfoFile="$2" -PfontinfoPage="$4"
+        ;;
+    add-text|add-image|list-images|move-image|replace-image|delete-image)
+        exec "$root/gradlew" -q :engine:pdfedit --args="$*"
+        ;;
+    *)
+        usage
+        ;;
+esac

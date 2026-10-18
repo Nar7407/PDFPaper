@@ -33,7 +33,33 @@ tasks.register<JavaExec>("corpusCheck") {
     outputs.file(corpusReport)
 }
 
+// T16: font diagnostics used while debugging extraction warnings.
+// Usage: cli fontinfo file.pdf --page 6  (or ./gradlew :engine:fontinfo --args="...")
+tasks.register<JavaExec>("fontinfo") {
+    group = "verification"
+    description = "Prints font dictionaries and degradation reasons for one page."
+    classpath = sourceSets["main"].runtimeClasspath
+    mainClass.set("com.pdfpaper.engine.tools.FontInfoKt")
+    // The cli wrappers pass paths as project properties so spaces survive.
+    val fontinfoFile = providers.gradleProperty("fontinfoFile")
+    val fontinfoPage = providers.gradleProperty("fontinfoPage")
+    if (fontinfoFile.isPresent) {
+        args(fontinfoFile.get(), "--page", fontinfoPage.getOrElse("1"))
+    }
+}
+
 val perfReport = layout.buildDirectory.file("perf-report.txt")
+
+// T17: text/image editing CLI. Usage:
+//   ./gradlew :engine:pdfedit --args="add-text in.pdf 1 72 700 14 --text Hello --out out.pdf"
+tasks.register<JavaExec>("pdfedit") {
+    group = "verification"
+    description = "Add text/images and manage page images (add-text, add-image, list-images, ...)."
+    classpath = sourceSets["main"].runtimeClasspath
+    mainClass.set("com.pdfpaper.engine.tools.PdfEditCliKt")
+    // Paths on the command line are resolved from the repo root, not engine/.
+    workingDir = rootProject.projectDir
+}
 
 // T14: generates a scaled sibling corpus (the committed /testdata files are
 // tiny structural fixtures) and times each engine phase against it.

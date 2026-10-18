@@ -1,0 +1,25 @@
+@echo off
+setlocal
+if "%~1"=="" goto usage
+if /I "%~1"=="fontinfo" goto fontinfo
+if /I "%~1"=="add-text" goto pdfedit
+if /I "%~1"=="add-image" goto pdfedit
+if /I "%~1"=="list-images" goto pdfedit
+if /I "%~1"=="move-image" goto pdfedit
+if /I "%~1"=="replace-image" goto pdfedit
+if /I "%~1"=="delete-image" goto pdfedit
+goto usage
+
+:fontinfo
+if not "%~3"=="--page" goto usage
+call "%~dp0gradlew.bat" -q :engine:fontinfo -PfontinfoFile="%~2" -PfontinfoPage="%~4"
+exit /b %ERRORLEVEL%
+
+:pdfedit
+call "%~dp0gradlew.bat" -q :engine:pdfedit --args="%*"
+exit /b %ERRORLEVEL%
+
+:usage
+echo Usage: cli fontinfo ^<file.pdf^> --page ^<n^> 1>&2
+echo        cli add-text^|add-image^|list-images^|move-image^|replace-image^|delete-image ... 1>&2
+exit /b 2
