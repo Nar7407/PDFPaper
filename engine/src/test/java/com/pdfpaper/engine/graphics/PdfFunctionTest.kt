@@ -3,6 +3,7 @@ package com.pdfpaper.engine.graphics
 import com.pdfpaper.engine.io.ByteArraySource
 import com.pdfpaper.engine.model.PdfDict
 import com.pdfpaper.engine.model.PdfDocument
+import com.pdfpaper.engine.model.PdfRef
 import com.pdfpaper.engine.model.PdfStream
 import com.pdfpaper.engine.test.TestObj
 import com.pdfpaper.engine.test.arr
@@ -167,5 +168,25 @@ class PdfFunctionTest {
                 )
             )
         )
+    }
+
+    @Test
+    fun selfReferentialStitchFunctionIsRejected() {
+        val cyclic = PdfDocument.open(
+            ByteArraySource(
+                buildTestPdf(
+                    listOf(
+                        TestObj(1, 0, "<< /Type /Catalog /Pages 2 0 R >>"),
+                        TestObj(2, 0, "<< /Type /Pages /Kids [] /Count 0 >>"),
+                        TestObj(
+                            5, 0,
+                            "<< /FunctionType 3 /Domain [0 1] /Functions [5 0 R] " +
+                                "/Bounds [] /Encode [0 1] >>"
+                        )
+                    )
+                )
+            )
+        ).getOrThrow()
+        cyclic.use { assertNull(PdfFunctions.resolve(PdfRef(5, 0), it)) }
     }
 }

@@ -161,7 +161,19 @@ internal class SampledFunction(
 /** Resolution of function dictionaries/streams (§7.10.1). */
 object PdfFunctions {
 
-    fun resolve(obj: PdfObject?, doc: PdfDocument): PdfFunction? {
+    fun resolve(obj: PdfObject?, doc: PdfDocument, seen: MutableSet<Int> = HashSet()): PdfFunction? {
+        if (obj is PdfRef) {
+            if (!seen.add(obj.objNum)) return null
+            try {
+                return resolveResolved(obj, doc, seen)
+            } finally {
+                seen.remove(obj.objNum)
+            }
+        }
+        return resolveResolved(obj, doc, seen)
+    }
+
+    private fun resolveResolved(obj: PdfObject?, doc: PdfDocument, seen: MutableSet<Int>): PdfFunction? {
         val dict: PdfDict = when (obj) {
             null -> return null
             is PdfRef -> {
@@ -178,7 +190,7 @@ object PdfFunctions {
         val type = (dict["FunctionType"] as? PdfInteger)?.value?.toInt() ?: return null
         return when (type) {
             2 -> exp(dict)
-            3 -> stitch(dict, doc)
+            3 -> stitch(dict, doc, seen)
             0 -> if (obj is PdfStream) sampled(obj, doc) else null
             else -> null // Type 4 (PostScript calculator): intentionally unsupported
         }
@@ -206,9 +218,9 @@ object PdfFunctions {
         return ExpFunction(domain, rangeOf(dict), c0, c1, n)
     }
 
-    private fun stitch(dict: PdfDict, doc: PdfDocument): PdfFunction? {
+    private fun stitch(dict: PdfDict, doc: PdfDocument, seen: MutableSet<Int>): PdfFunction? {
         val fns = (dict["Functions"] as? PdfArray)?.items
-            ?.map { resolve(it, doc) ?: return null } ?: return null
+            ?.map { resolve(it, doc, seen) ?: return null } ?: return null
         val domain = domainOf(dict).ifEmpty { listOf(doubleArrayOf(0.0, 1.0)) }
         val bounds = numbers(dict["Bounds"])
         val encode = pairsOf(dict["Encode"])
