@@ -29,6 +29,18 @@ internal object EmbeddedFont {
 
     val available: Boolean get() = bytes != null && metrics != null
 
+    /**
+     * Advance width of [text] in 1/1000 em using the font's own `hmtx` widths,
+     * or null when the font could not be read. Characters with no WinAnsi code
+     * are measured as '?', matching what [WinAnsi.encode] draws (§9.6.6).
+     */
+    fun advance1000(text: String): Long? {
+        val m = metrics ?: return null
+        var total = 0L
+        for (ch in text) total += m.width1000(WinAnsi.unicodeOf(WinAnsi.codeOf(ch)))
+        return total
+    }
+
     fun fontDict(builder: PdfDocumentBuilder): PdfDict {
         val fontBytes = bytes ?: error("fallback font NotoSans-Regular.ttf is not bundled")
         val m = metrics ?: error("fallback font NotoSans-Regular.ttf could not be read")

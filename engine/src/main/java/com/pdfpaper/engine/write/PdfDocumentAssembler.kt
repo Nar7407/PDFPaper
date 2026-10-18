@@ -4,6 +4,7 @@ import com.pdfpaper.engine.annot.AnnotationSpec
 import com.pdfpaper.engine.annot.AnnotationWriter
 import com.pdfpaper.engine.edit.PageEdit
 import com.pdfpaper.engine.edit.PageEditApplier
+import com.pdfpaper.engine.edit.TextEditReport
 import com.pdfpaper.engine.form.FormFiller
 import com.pdfpaper.engine.model.PdfArray
 import com.pdfpaper.engine.model.PdfDict
@@ -81,6 +82,12 @@ internal class PdfDocumentAssembler(
     private val additionsByPage: Map<Int, List<AnnotationSpec>> = additions.groupBy { it.pageIndex }
     private val editsByPage: Map<Int, List<PageEdit>> = edits.groupBy { it.pageIndex }
     private val annotationWriter: AnnotationWriter by lazy { AnnotationWriter(builder) }
+
+    /** Reports from text edits applied while copying (task T16). */
+    private val textReports = ArrayList<TextEditReport>()
+
+    /** Text-edit reports gathered by the last [assemble] call. */
+    fun textReports(): List<TextEditReport> = textReports
 
     fun assemble(): ByteArray {
         checkNotEncrypted(primary)
@@ -192,7 +199,7 @@ internal class PdfDocumentAssembler(
                 PdfInteger(normalizeRotation(page.rotate + selection.rotationDelta).toLong())
         }
         if (edited) {
-            PageEditApplier(builder, copier, page, pageEdits).apply(entries)
+            PageEditApplier(builder, copier, page, pageEdits, textReports).apply(entries)
         }
         builder.put(ref.objNum, PdfDict(entries))
     }

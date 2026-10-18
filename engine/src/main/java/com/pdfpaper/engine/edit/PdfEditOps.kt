@@ -70,6 +70,53 @@ object PdfEditOps {
         PdfDocumentAssembler(selections, document, version, edits = valid).assemble()
     }
 
+    /**
+     * Like [save], but also returns one [TextEditReport] per text edit, saying
+     * which strategy each used and whether the replacement overflowed (T16).
+     */
+    fun saveWithReport(
+        document: PdfDocument,
+        edits: List<PageEdit>,
+        version: String = PdfWriter.DEFAULT_VERSION
+    ): Result<SaveResult> = runCatching {
+        val pages = document.pages()
+        val valid = edits.filter { it.pageIndex in pages.indices }
+        val selections = pages.mapIndexed { index, _ -> PdfPageSelection(document, index) }
+        val assembler = PdfDocumentAssembler(selections, document, version, edits = valid)
+        val bytes = assembler.assemble()
+        SaveResult(bytes, assembler.textReports())
+    }
+
+    /**
+     * Editable text runs drawn in the page's own content stream, in order (T16).
+     * Built from the same T7 interpreter used for extraction, so ids and text
+     * match what [com.pdfpaper.engine.text.extractText] reports.
+     */
+    fun listTextRuns(document: PdfDocument, pageIndex: Int): List<EditableTextRun> {
+        val page = document.pages().getOrNull(pageIndex) ?: return emptyList()
+        val commands = parseContent(page.contents().getOrNull()?.bytes ?: ByteArray(0)).commands
+        val runs = TextRunScanner.scan(commands, page.resources, document, ArrayList())
+        return runs.map { scanned ->
+            val run = scanned.run
+            EditableTextRun(
+                id = scanned.id,
+                text = run.text,
+                bounds = PdfRect(run.x0, run.y0, run.x1, run.y1),
+                fontName = stripSubsetPrefix(run.fontName),
+                fontSize = run.fontSize,
+                color = scanned.color,
+                invisible = run.renderMode == 3 || run.renderMode == 7
+            )
+        }
+    }
+
+    /** Drops the six-letter "ABCDEF+" subset prefix from a /BaseFont name. */
+    private fun stripSubsetPrefix(name: String?): String? {
+        if (name == null || name.length < 8 || name[6] != '+') return name
+        val prefix = name.substring(0, 6)
+        return if (prefix.all { it in 'A'..'Z' }) name.substring(7) else name
+    }
+
     // -- Helpers --------------------------------------------------------------
 
     private fun xObjectTable(page: PdfPage): Map<String, PdfObject> {

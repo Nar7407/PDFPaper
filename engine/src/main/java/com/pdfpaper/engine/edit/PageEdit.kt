@@ -64,6 +64,32 @@ class DeleteImageEdit(
 ) : PageEdit
 
 /**
+ * Replaces the text of run [runId] (task T16). When the run's font can encode
+ * every character the original operators are rewritten in place (font, position
+ * and size kept); otherwise the run is removed and [text] is drawn with the
+ * bundled fallback font. The chosen strategy is reported by [PdfEditOps].
+ */
+class ReplaceTextEdit(
+    override val pageIndex: Int,
+    val runId: Int,
+    val text: String
+) : PageEdit
+
+/** Removes run [runId] from the page (task T16). */
+class DeleteTextEdit(
+    override val pageIndex: Int,
+    val runId: Int
+) : PageEdit
+
+/** Shifts run [runId] by ([dx], [dy]) page user units, keeping its text (task T16). */
+class MoveTextEdit(
+    override val pageIndex: Int,
+    val runId: Int,
+    val dx: Double,
+    val dy: Double
+) : PageEdit
+
+/**
  * Ordered, undoable list of pending [PageEdit]s (task T17). [undo] moves the
  * newest edit onto the redo stack; [redo] puts it back. Adding a new edit
  * clears the redo stack, matching editor convention.

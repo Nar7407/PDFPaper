@@ -79,6 +79,9 @@ internal object WinAnsi {
         return out
     }
 
+    /** The WinAnsi byte for [character], or `'?'` when it has no code. */
+    fun codeOf(character: Char): Int = ENCODE[character] ?: QuestionMark
+
     fun canEncode(character: Char): Boolean = ENCODE.containsKey(character)
 
     /** Unicode code point for a WinAnsi byte, or 0 when the byte is undefined. */

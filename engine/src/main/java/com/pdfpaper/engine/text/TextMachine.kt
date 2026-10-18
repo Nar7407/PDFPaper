@@ -14,6 +14,17 @@ import com.pdfpaper.engine.model.PdfString
 import com.pdfpaper.engine.page.PdfPage
 
 /**
+ * Where one shown string lives inside its content command, so the editor (T16)
+ * can rewrite exactly that operand (§9.4.3, Table 106).
+ */
+class TextShowSource(
+    /** Index of the string in the command's operands: 0 for Tj/'/TJ, 2 for `"`. */
+    val operandIndex: Int,
+    /** Element index inside the TJ array, or -1 for Tj/`'`/`"`. */
+    val arrayIndex: Int
+)
+
+/**
  * One text-showing operand turned into positioned Unicode text (§9.4.3).
  * No glyphs are rendered — [x0]..[y1] is an axis-aligned box in page space.
  */
@@ -41,7 +52,13 @@ class PdfTextRun(
     /** "truetype" | "opentype" | "cff" | "type1" when [fontProgram] is set. */
     val fontFormat: String? = null,
     /** Text rendering mode from Tr (§9.3.6); 3 = invisible, 7 = add to clip. */
-    val renderMode: Int = 0
+    val renderMode: Int = 0,
+    /** Editor location of the operand (T16); null for non-editor callers. */
+    val source: TextShowSource? = null,
+    /** Text matrix at the start of this show (§9.4.4); identity when unset. */
+    val startMatrix: PdfMatrix = PdfMatrix.IDENTITY,
+    /** Text-space advance of this operand in text units (§9.4.4); 0 when unset. */
+    val advance: Double = 0.0
 ) {
     override fun toString(): String =
         "PdfTextRun(\"$text\", size=$fontSize, [$x0,$y0 → $x1,$y1])"
@@ -138,6 +155,21 @@ class TextMachine(
     /** Text rendering mode from Tr (§9.3.6); 3 = invisible, 7 = clip. */
     private var renderMode = 0
 
+    /** Font in effect from the last Tf (§9.4.3), or null when none was set. */
+    val activeFont: PdfFont? get() = font
+
+    /** Font size from the last Tf, in untransformed text-space units. */
+    val activeFontSize: Double get() = fontSize
+
+    /** Character spacing Tc (§9.3.2). */
+    val activeCharSpace: Double get() = charSpace
+
+    /** Word spacing Tw (§9.3.3). */
+    val activeWordSpace: Double get() = wordSpace
+
+    /** Horizontal scaling Tz, as a percentage (§9.3.4). */
+    val activeScale: Double get() = scale
+
     /** Current text state for q. */
     fun snapshot(): TextStateSnapshot =
         TextStateSnapshot(lineMat, textMat, font, fontSize, leading, charSpace, wordSpace, scale, rise, renderMode)
@@ -210,22 +242,22 @@ class TextMachine(
             "T*" -> moveToTextLine(0.0, -leading)
 
             // --- text showing (§9.4.3, Table 106) ----------------------
-            "Tj" -> stringOf(ops.getOrNull(0))?.let { showString(it, ctm, out) }
+            "Tj" -> stringOf(ops.getOrNull(0))?.let { showString(it, ctm, out, TextShowSource(0, -1)) }
             "'" -> {
                 moveToTextLine(0.0, -leading)
-                stringOf(ops.getOrNull(0))?.let { showString(it, ctm, out) }
+                stringOf(ops.getOrNull(0))?.let { showString(it, ctm, out, TextShowSource(0, -1)) }
             }
             "\"" -> {
                 number(ops.getOrNull(0))?.let { wordSpace = it }
                 number(ops.getOrNull(1))?.let { charSpace = it }
                 moveToTextLine(0.0, -leading)
-                stringOf(ops.getOrNull(2))?.let { showString(it, ctm, out) }
+                stringOf(ops.getOrNull(2))?.let { showString(it, ctm, out, TextShowSource(2, -1)) }
             }
             "TJ" -> {
                 val arr = ops.getOrNull(0) as? PdfArray ?: return true
-                for (item in arr.items) {
+                for ((index, item) in arr.items.withIndex()) {
                     when (item) {
-                        is PdfString -> showString(item.bytes, ctm, out)
+                        is PdfString -> showString(item.bytes, ctm, out, TextShowSource(0, index))
                         is PdfInteger, is PdfReal -> {
                             val n = number(item) ?: 0.0
                             shift(-(n / 1000.0) * fontSize * scale / 100.0)
@@ -255,57 +287,45 @@ class TextMachine(
      * advances Tm per glyph, and emits one run per operand. Simple fonts
      * consume one byte per code (§9.6); Type0 fonts two bytes per CID (§9.7.5).
      */
-    private fun showString(bytes: ByteArray, ctm: PdfMatrix, out: MutableList<PdfTextRun>) {
+    private fun showString(
+        bytes: ByteArray,
+        ctm: PdfMatrix,
+        out: MutableList<PdfTextRun>,
+        source: TextShowSource?
+    ) {
         if (bytes.isEmpty()) return
         val activeFont = font ?: FALLBACK_FONT
         val startMat = textMat
-        val sb = StringBuilder()
-        var advance = 0.0
+        val shape = shapeText(activeFont, bytes, fontSize, charSpace, wordSpace, scale)
+        // The text matrix advances for every glyph, shown or not (§9.4.4).
+        textMat = textMat * PdfMatrix.translation(shape.advance, 0.0)
+        if (shape.text.isEmpty()) return
 
-        fun glyph(text: String, width1000: Long, isWord: Boolean) {
-            sb.append(text)
-            val w = width1000 / 1000.0 * fontSize
-            val tx = (w + charSpace + (if (isWord) wordSpace else 0.0)) * scale / 100.0
-            advance += tx
-            textMat = textMat * PdfMatrix.translation(tx, 0.0)
-        }
-
-        val type0 = activeFont as? PdfType0Font
-        if (type0 != null) {
-            for (cid in type0.cids(bytes)) {
-                glyph(type0.decode(cid), type0.width1000(cid), isWord = false)
-            }
-        } else {
-            val simple = (activeFont as? PdfSimpleFont) ?: FALLBACK_FONT
-            for (b in bytes) {
-                val code = b.toInt() and 0xFF
-                glyph(simple.decode(code), simple.width1000(code), isWord = code == 32)
-            }
-        }
-
-        if (sb.isEmpty()) return
         val full = ctm * startMat
         val top = rise + fontSize
         val xs = doubleArrayOf(
-            full.apply(0.0, rise)[0], full.apply(advance, rise)[0],
-            full.apply(advance, top)[0], full.apply(0.0, top)[0]
+            full.apply(0.0, rise)[0], full.apply(shape.advance, rise)[0],
+            full.apply(shape.advance, top)[0], full.apply(0.0, top)[0]
         )
         val ys = doubleArrayOf(
-            full.apply(0.0, rise)[1], full.apply(advance, rise)[1],
-            full.apply(advance, top)[1], full.apply(0.0, top)[1]
+            full.apply(0.0, rise)[1], full.apply(shape.advance, rise)[1],
+            full.apply(shape.advance, top)[1], full.apply(0.0, top)[1]
         )
         out += PdfTextRun(
-            text = sb.toString(),
+            text = shape.text,
             fontSize = fontSize,
             fontName = activeFont.name,
             x0 = xs.min(), y0 = ys.min(), x1 = xs.max(), y1 = ys.max(),
             originX = full.apply(0.0, rise)[0],
             originY = full.apply(0.0, rise)[1],
-            endX = full.apply(advance, rise)[0],
-            endY = full.apply(advance, rise)[1],
+            endX = full.apply(shape.advance, rise)[0],
+            endY = full.apply(shape.advance, rise)[1],
             fontProgram = activeFont.embeddedProgram,
             fontFormat = activeFont.embeddedFormat,
-            renderMode = renderMode
+            renderMode = renderMode,
+            source = source,
+            startMatrix = startMat,
+            advance = shape.advance
         )
     }
 
@@ -316,4 +336,43 @@ class TextMachine(
         is PdfReal -> obj.value
         else -> null
     }
+}
+
+/** Decoded text plus its text-space advance for one string operand (§9.4.4). */
+internal class TextShape(val text: String, val advance: Double)
+
+/**
+ * Decodes [bytes] through [font] and sums the glyph advances under the given
+ * text state (§9.3, §9.4.4). One implementation shared by [TextMachine] and the
+ * editor so the two can never disagree.
+ */
+internal fun shapeText(
+    font: PdfFont,
+    bytes: ByteArray,
+    fontSize: Double,
+    charSpace: Double,
+    wordSpace: Double,
+    scale: Double
+): TextShape {
+    if (bytes.isEmpty()) return TextShape("", 0.0)
+    val sb = StringBuilder()
+    var advance = 0.0
+
+    fun glyph(text: String, width1000: Long, isWord: Boolean) {
+        sb.append(text)
+        val w = width1000 / 1000.0 * fontSize
+        advance += (w + charSpace + (if (isWord) wordSpace else 0.0)) * scale / 100.0
+    }
+
+    val type0 = font as? PdfType0Font
+    if (type0 != null) {
+        for (cid in type0.cids(bytes)) glyph(type0.decode(cid), type0.width1000(cid), isWord = false)
+    } else {
+        val simple = (font as? PdfSimpleFont) ?: FALLBACK_FONT
+        for (b in bytes) {
+            val code = b.toInt() and 0xFF
+            glyph(simple.decode(code), simple.width1000(code), isWord = code == 32)
+        }
+    }
+    return TextShape(sb.toString(), advance)
 }

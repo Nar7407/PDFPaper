@@ -28,7 +28,9 @@ internal class PageEditApplier(
     private val builder: PdfDocumentBuilder,
     private val copier: PdfObjectCopier,
     private val page: PdfPage,
-    private val edits: List<PageEdit>
+    private val edits: List<PageEdit>,
+    /** Receives one report per applied text edit (T16). */
+    private val textReports: MutableList<TextEditReport> = ArrayList()
 ) {
 
     private val fontResources = LinkedHashMap<PdfName, PdfObject>()
@@ -42,6 +44,9 @@ internal class PageEditApplier(
         parseContent(page.contents().getOrNull()?.bytes ?: ByteArray(0)).commands
     }
 
+    private val hasTextEdits: Boolean
+        get() = edits.any { it is ReplaceTextEdit || it is DeleteTextEdit || it is MoveTextEdit }
+
     fun apply(entries: LinkedHashMap<PdfName, PdfObject>) {
         val source = page.resources
         val base = source?.let { copier.copyDict(it, skipKeys = setOf("Font", "XObject")) } ?: PdfDict(emptyMap())
@@ -49,7 +54,7 @@ internal class PageEditApplier(
         copyFontGroup(source)
         copyXObjectGroup(source)
 
-        val rewritesContent = edits.any {
+        val rewritesContent = hasTextEdits || edits.any {
             it is MoveImageEdit || it is ResizeImageEdit || it is DeleteImageEdit
         }
         if (rewritesContent) {
@@ -140,7 +145,10 @@ internal class PageEditApplier(
     }
 
     private fun rewriteContent(): ByteArray {
-        val model = ContentModel(originalCommands, ::isImageName)
+        // Text edits are applied first; they never touch image `Do` commands, so
+        // the image edits below still find their placements by name.
+        val editedCommands = applyTextEdits(originalCommands)
+        val model = ContentModel(editedCommands, ::isImageName)
         val deletedNames = HashSet<String>()
         for (edit in edits) {
             when (edit) {
@@ -153,10 +161,29 @@ internal class PageEditApplier(
                     model.delete(edit.imageId)
                 }
                 is ReplaceImageEdit -> replaceImage(edit)
+                else -> {}
             }
         }
         dropUnusedImages(deletedNames, model.commands)
         return ContentSerializer.serialize(model.commands)
+    }
+
+    /** Runs the T16 scanner/editor, appending one report per text edit. */
+    private fun applyTextEdits(commands: List<ContentCommand>): List<ContentCommand> {
+        val textEdits = edits.filter {
+            it is ReplaceTextEdit || it is DeleteTextEdit || it is MoveTextEdit
+        }
+        if (textEdits.isEmpty()) return commands
+        val warnings = ArrayList<String>()
+        val runs = TextRunScanner.scan(commands, page.resources, page.document, warnings)
+        val editor = TextRunEditor(
+            commands = commands,
+            runs = runs,
+            pageIndex = textEdits.first().pageIndex,
+            fallbackName = { fontNameFor(EditFont.Fallback) },
+            reports = textReports
+        )
+        return editor.apply(textEdits)
     }
 
     /**

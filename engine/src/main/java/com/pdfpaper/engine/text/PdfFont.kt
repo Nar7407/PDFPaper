@@ -40,6 +40,13 @@ sealed interface PdfFont {
 
     /** What [embeddedProgram] holds: "truetype", "opentype", "cff" or "type1". */
     val embeddedFormat: String? get() = null
+
+    /**
+     * Encodes [text] into this font's code bytes (§9.6.6 / §9.7.5), or null
+     * when the font has no code for a character. Used by text-run editing (T16):
+     * a null result means the replacement must be drawn with a fallback font.
+     */
+    fun encode(text: String): ByteArray? = null
 }
 
 /** Simple one-byte-code font (§9.6): Type1, TrueType, Type3, MMType1, ... */
@@ -65,6 +72,40 @@ class PdfSimpleFont internal constructor(
 
     /** Advance width in 1/1000 em for a single-byte code. */
     fun width1000(code: Int): Long = widths1000[code and 0xFF] ?: 0L
+
+    /**
+     * Codes this font can actually address. A non-embedded font is assumed to
+     * supply the whole encoding (the viewer substitutes a full font, §9.6.2.2);
+     * an embedded one is limited to the codes it declares — its /Widths range
+     * for a subset, or its /Differences and /ToUnicode otherwise (§9.6.6).
+     */
+    private val encodableCodes: IntArray by lazy {
+        when {
+            embeddedProgram == null -> IntArray(256) { it }
+            widths1000.isNotEmpty() -> widths1000.keys.toIntArray()
+            else -> (differences.keys + (toUnicode?.keys ?: emptySet())).toIntArray()
+        }
+    }
+
+    /** Reverse of [decode] over [encodableCodes]: Unicode char → first code. */
+    private val reverseByChar: Map<Char, Int> by lazy {
+        buildMap {
+            for (code in encodableCodes) {
+                val text = decode(code)
+                if (text.length == 1) putIfAbsent(text[0], code and 0xFF)
+            }
+        }
+    }
+
+    override fun encode(text: String): ByteArray? {
+        if (text.isEmpty()) return ByteArray(0)
+        val out = ByteArray(text.length)
+        for (i in text.indices) {
+            val code = reverseByChar[text[i]] ?: return null
+            out[i] = code.toByte()
+        }
+        return out
+    }
 }
 
 /** Composite Type0 font (§9.7.5) with CID encoding (Identity-H/V here). */
@@ -104,6 +145,29 @@ class PdfType0Font internal constructor(
 
     /** Advance width in 1/1000 em for a CID (/W array, §9.7.4.1). */
     fun width1000(cid: Int): Long = widths1000[cid] ?: defaultWidth1000
+
+    /** Reverse of [decode] over /ToUnicode: Unicode char → CID. */
+    private val reverseByChar: Map<Char, Int> by lazy {
+        val map = toUnicode ?: return@lazy emptyMap()
+        buildMap {
+            for ((cid, text) in map) if (text.length == 1) putIfAbsent(text[0], cid)
+        }
+    }
+
+    override fun encode(text: String): ByteArray? {
+        // A composite font is only rewritten in place when /ToUnicode maps the
+        // text back to CIDs and the embedded program supplies the glyphs (T16).
+        if (unsupportedEncoding || toUnicode == null || embeddedProgram == null) return null
+        if (text.isEmpty()) return ByteArray(0)
+        val out = ByteArray(text.length * 2)
+        for (i in text.indices) {
+            val cid = reverseByChar[text[i]] ?: return null
+            if (widths1000.isNotEmpty() && cid !in widths1000) return null
+            out[2 * i] = (cid shr 8).toByte()
+            out[2 * i + 1] = cid.toByte()
+        }
+        return out
+    }
 }
 
 /** Never-crashing placeholder used when a font operand is missing or unusable. */

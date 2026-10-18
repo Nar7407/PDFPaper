@@ -3,13 +3,16 @@ package com.pdfpaper.engine.tools
 import com.pdfpaper.engine.edit.AddImageEdit
 import com.pdfpaper.engine.edit.AddTextEdit
 import com.pdfpaper.engine.edit.DeleteImageEdit
+import com.pdfpaper.engine.edit.DeleteTextEdit
 import com.pdfpaper.engine.edit.EditFont
 import com.pdfpaper.engine.edit.EditImages
 import com.pdfpaper.engine.edit.EditList
 import com.pdfpaper.engine.edit.MoveImageEdit
+import com.pdfpaper.engine.edit.MoveTextEdit
 import com.pdfpaper.engine.edit.PageEdit
 import com.pdfpaper.engine.edit.PdfEditOps
 import com.pdfpaper.engine.edit.ReplaceImageEdit
+import com.pdfpaper.engine.edit.ReplaceTextEdit
 import com.pdfpaper.engine.edit.StandardFont
 import com.pdfpaper.engine.graphics.PdfColor
 import com.pdfpaper.engine.io.FileSource
@@ -27,6 +30,12 @@ import java.io.File
  *   cli replace-image <file.pdf> <page> <id> --image <image> --out <out.pdf>
  *   cli delete-image  <file.pdf> <page> <id> --out <out.pdf>
  *
+ * Text runs are listed and edited in place (task T16):
+ *   cli list-text-runs <file.pdf> <page>
+ *   cli replace-text   <file.pdf> <page> <id> --text <s> --out <out.pdf>
+ *   cli delete-text    <file.pdf> <page> <id> --out <out.pdf>
+ *   cli move-text      <file.pdf> <page> <id> <dx> <dy> --out <out.pdf>
+ *
  * Page numbers are 1-based, matching the pages users see. The font is one of
  * the standard 14 or "fallback" (the embedded TrueType font).
  */
@@ -42,6 +51,10 @@ fun main(args: Array<String>) {
         "move-image" -> moveImage(args.drop(1))
         "replace-image" -> replaceImage(args.drop(1))
         "delete-image" -> deleteImage(args.drop(1))
+        "list-text-runs" -> listTextRuns(args.drop(1))
+        "replace-text" -> replaceText(args.drop(1))
+        "delete-text" -> deleteText(args.drop(1))
+        "move-text" -> moveText(args.drop(1))
         else -> fail("unknown command '$command'")
     }
     kotlin.system.exitProcess(status)
@@ -111,6 +124,53 @@ private fun deleteImage(args: List<String>): Int = withParsed(args) { parsed ->
     save(file, parsed.requireOption("out"), EditList().apply { add(DeleteImageEdit(page - 1, id)) })
 }
 
+private fun listTextRuns(args: List<String>): Int = withParsed(args) { parsed ->
+    val file = parsed.requireFile(0)
+    val page = parsed.requirePage(1)
+    open(file).use { document ->
+        val runs = PdfEditOps.listTextRuns(document, page - 1)
+        if (runs.isEmpty()) println("page $page: no text runs")
+        for (run in runs) {
+            val b = run.bounds
+            val color = "#%02X%02X%02X".format(
+                (run.color.red * 255.0).toInt().coerceIn(0, 255),
+                (run.color.green * 255.0).toInt().coerceIn(0, 255),
+                (run.color.blue * 255.0).toInt().coerceIn(0, 255)
+            )
+            val flags = if (run.invisible) "\tinvisible" else ""
+            println(
+                "${run.id}\t${run.fontName ?: "?"}\t${run.fontSize}\t$color\t" +
+                    "[${b.left},${b.bottom},${b.right},${b.top}]\t${run.text}$flags"
+            )
+        }
+    }
+    0
+}
+
+private fun replaceText(args: List<String>): Int = withParsed(args) { parsed ->
+    val file = parsed.requireFile(0)
+    val page = parsed.requirePage(1)
+    val id = parsed.requireInt(2, "id")
+    val text = parsed.option("text") ?: fail("--text is required")
+    saveWithReport(file, parsed.requireOption("out"), EditList().apply { add(ReplaceTextEdit(page - 1, id, text)) })
+}
+
+private fun deleteText(args: List<String>): Int = withParsed(args) { parsed ->
+    val file = parsed.requireFile(0)
+    val page = parsed.requirePage(1)
+    val id = parsed.requireInt(2, "id")
+    saveWithReport(file, parsed.requireOption("out"), EditList().apply { add(DeleteTextEdit(page - 1, id)) })
+}
+
+private fun moveText(args: List<String>): Int = withParsed(args) { parsed ->
+    val file = parsed.requireFile(0)
+    val page = parsed.requirePage(1)
+    val id = parsed.requireInt(2, "id")
+    val dx = parsed.requireDouble(3, "dx")
+    val dy = parsed.requireDouble(4, "dy")
+    saveWithReport(file, parsed.requireOption("out"), EditList().apply { add(MoveTextEdit(page - 1, id, dx, dy)) })
+}
+
 // -- Shared helpers -----------------------------------------------------------
 
 private fun save(source: File, out: String, edits: EditList): Int {
@@ -121,6 +181,21 @@ private fun save(source: File, out: String, edits: EditList): Int {
             return 1
         }
         File(out).writeBytes(data)
+        println("Wrote ${edits.size} edit(s) to ${File(out).absolutePath}")
+    }
+    return 0
+}
+
+/** Same as [save] but prints the text-edit reports (strategy, overflow). */
+private fun saveWithReport(source: File, out: String, edits: EditList): Int {
+    val document = open(source)
+    document.use {
+        val result = PdfEditOps.saveWithReport(it, edits.edits()).getOrElse { error ->
+            System.err.println("Save failed: ${error.message ?: error::class.simpleName}")
+            return 1
+        }
+        File(out).writeBytes(result.bytes)
+        for (report in result.textReports) println(report)
         println("Wrote ${edits.size} edit(s) to ${File(out).absolutePath}")
     }
     return 0
@@ -175,6 +250,9 @@ private class Parsed(
     fun requireDouble(index: Int, name: String): Double =
         requirePositional(index, name).toDoubleOrNull() ?: fail("<$name> must be a number")
 
+    fun requireInt(index: Int, name: String): Int =
+        requirePositional(index, name).toIntOrNull() ?: fail("<$name> must be an integer")
+
     fun option(name: String): String? = options[name]
 
     fun requireOption(name: String): String = options[name] ?: fail("--$name is required")
@@ -225,6 +303,10 @@ private fun usage() {
           cli move-image    <file.pdf> <page> <id> <dx> <dy> --out <out.pdf>
           cli replace-image <file.pdf> <page> <id> --image <image> --out <out.pdf>
           cli delete-image  <file.pdf> <page> <id> --out <out.pdf>
+          cli list-text-runs <file.pdf> <page>
+          cli replace-text  <file.pdf> <page> <id> --text <s> --out <out.pdf>
+          cli delete-text   <file.pdf> <page> <id> --out <out.pdf>
+          cli move-text     <file.pdf> <page> <id> <dx> <dy> --out <out.pdf>
         """.trimIndent()
     )
 }
