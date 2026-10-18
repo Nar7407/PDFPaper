@@ -3,10 +3,14 @@ package com.pdfpaper.engine.annot
 import com.pdfpaper.engine.geom.PdfRect
 import com.pdfpaper.engine.graphics.ClipPath
 import com.pdfpaper.engine.graphics.FillPath
+import com.pdfpaper.engine.graphics.LineTo
+import com.pdfpaper.engine.graphics.MoveTo
 import com.pdfpaper.engine.graphics.PdfColor
+import com.pdfpaper.engine.graphics.PdfPath
 import com.pdfpaper.engine.graphics.RestoreGraphicsState
 import com.pdfpaper.engine.graphics.SaveGraphicsState
 import com.pdfpaper.engine.graphics.SetBlendMode
+import com.pdfpaper.engine.graphics.StrokePath
 import com.pdfpaper.engine.graphics.buildDisplayList
 import com.pdfpaper.engine.io.ByteArraySource
 import com.pdfpaper.engine.model.PdfDocument
@@ -89,6 +93,40 @@ class AnnotationTest {
     }
 
     @Test
+    fun readsUnderlineStrikeOutAndFreeText() {
+        val doc = document(
+            "<< /Type /Annot /Subtype /Underline /Rect [100 100 200 120] " +
+                "/QuadPoints [100 120 200 120 100 100 200 100] /C [0 0 1] /Contents (under) /F 4 >>",
+            "<< /Type /Annot /Subtype /StrikeOut /Rect [100 200 200 220] " +
+                "/QuadPoints [100 220 200 220 100 200 200 200] /C [1 0 0] /Contents (strike) /F 4 >>",
+            "<< /Type /Annot /Subtype /FreeText /Rect [50 500 250 530] " +
+                "/Contents (free text) /C [1 1 1] /DA (/Helv 12 Tf 0 g) /F 4 >>"
+        )
+        val annots = doc.pages().first().annotations()
+        assertEquals(3, annots.size)
+
+        val underline = annots[0]
+        assertEquals(AnnotationType.UNDERLINE, underline.type)
+        assertEquals(PdfRect(100.0, 100.0, 200.0, 120.0), underline.quadPoints.single().bounds())
+        assertEquals(PdfColor(0.0, 0.0, 1.0), underline.color)
+        assertEquals("under", underline.contents)
+
+        val strikeout = annots[1]
+        assertEquals(AnnotationType.STRIKEOUT, strikeout.type)
+        assertEquals(PdfRect(100.0, 200.0, 200.0, 220.0), strikeout.quadPoints.single().bounds())
+        assertEquals(PdfColor(1.0, 0.0, 0.0), strikeout.color)
+        assertEquals("strike", strikeout.contents)
+
+        val freeText = annots[2]
+        assertEquals(AnnotationType.FREE_TEXT, freeText.type)
+        assertEquals(PdfRect(50.0, 500.0, 250.0, 530.0), freeText.rect)
+        assertEquals(PdfColor(1.0, 1.0, 1.0), freeText.color)
+        assertEquals("free text", freeText.contents)
+        assertTrue(freeText.quadPoints.isEmpty())
+        doc.close()
+    }
+
+    @Test
     fun hiddenAnnotationsAreSkippedWhenRendering() {
         val doc = document(
             "<< /Type /Annot /Subtype /Highlight /Rect [100 100 200 120] /C [1 1 0] /F 2 >>"
@@ -113,6 +151,40 @@ class AnnotationTest {
         assertEquals(PdfColor(1.0, 1.0, 0.0), fill.color)
         assertEquals(0.5, fill.alpha)
         assertTrue(list.commands[3] is RestoreGraphicsState)
+        doc.close()
+    }
+
+    @Test
+    fun underlineStrikeOutAndFreeTextRenderWithoutAppearance() {
+        val doc = document(
+            "<< /Type /Annot /Subtype /Underline /Rect [100 100 200 120] " +
+                "/QuadPoints [100 120 200 120 100 100 200 100] /C [0 0 1] >>",
+            "<< /Type /Annot /Subtype /StrikeOut /Rect [100 200 200 220] " +
+                "/QuadPoints [100 220 200 220 100 200 200 200] /C [1 0 0] >>",
+            "<< /Type /Annot /Subtype /FreeText /Rect [50 500 250 530] " +
+                "/Contents (free text) /C [1 1 1] /DA (/Helv 12 Tf 0 g) >>"
+        )
+        val strokes = doc.pages().first().buildAnnotationDisplayList().commands
+            .filterIsInstance<StrokePath>()
+        assertEquals(3, strokes.size)
+
+        val underline = strokes[0]
+        assertEquals(PdfColor(0.0, 0.0, 1.0), underline.color)
+        assertEquals(listOf(MoveTo(100.0, 102.0), LineTo(200.0, 102.0)), underline.path.segments)
+        assertEquals(1.0, underline.lineStyle.width)
+
+        val strikeout = strokes[1]
+        assertEquals(PdfColor(1.0, 0.0, 0.0), strikeout.color)
+        assertEquals(listOf(MoveTo(100.0, 210.0), LineTo(200.0, 210.0)), strikeout.path.segments)
+        assertEquals(1.0, strikeout.lineStyle.width)
+
+        val freeText = strokes[2]
+        assertEquals(PdfColor(1.0, 1.0, 1.0), freeText.color)
+        assertEquals(
+            PdfPath.rectangle(50.0, 500.0, 250.0, 530.0).segments,
+            freeText.path.segments
+        )
+        assertEquals(1.0, freeText.lineStyle.width)
         doc.close()
     }
 
