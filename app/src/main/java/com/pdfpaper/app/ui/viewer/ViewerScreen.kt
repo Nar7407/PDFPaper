@@ -1,24 +1,34 @@
 package com.pdfpaper.app.ui.viewer
 
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.calculateZoom
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -26,16 +36,37 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.outlined.Redo
+import androidx.compose.material.icons.automirrored.outlined.Undo
+import androidx.compose.material.icons.outlined.AddPhotoAlternate
+import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.Draw
+import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material.icons.outlined.Highlight
+import androidx.compose.material.icons.outlined.NearMe
+import androidx.compose.material.icons.outlined.NoteAdd
+import androidx.compose.material.icons.outlined.Photo
+import androidx.compose.material.icons.outlined.Save
+import androidx.compose.material.icons.outlined.TextFields
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Slider
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
@@ -48,15 +79,18 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -64,12 +98,30 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.zIndex
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.pdfpaper.app.edit.EditFontFamily
+import com.pdfpaper.app.edit.EditableBounds
+import com.pdfpaper.app.edit.EditableHandle
+import com.pdfpaper.app.edit.EditableObject
+import com.pdfpaper.app.edit.EditableObjectType
+import com.pdfpaper.app.edit.EditableStyle
 import com.pdfpaper.app.ui.PasswordDialog
+import com.pdfpaper.app.ui.UiTags
+import com.pdfpaper.app.ui.theme.PDFPaperTheme
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import com.pdfpaper.engine.annot.AnnotationSpec
 import com.pdfpaper.engine.annot.HighlightSpec
 import com.pdfpaper.engine.annot.InkSpec
@@ -89,6 +141,13 @@ import kotlin.math.roundToInt
 private const val MIN_ZOOM = 0.5f
 private const val MAX_ZOOM = 6f
 
+/** The text object being created or edited, plus where it belongs. */
+private data class TextTarget(
+    val pageIndex: Int,
+    val bounds: EditableBounds,
+    val existing: EditableObject? = null
+)
+
 /**
  * Continuous page viewer (T9) with text search and selection (T11): a
  * LazyColumn of page bitmaps rendered in the background by [ViewerViewModel],
@@ -103,6 +162,7 @@ fun ViewerScreen(
     path: String,
     startInEditMode: Boolean = false,
     startWithForms: Boolean = false,
+    startEditTool: String? = null,
     onBack: () -> Unit = {},
     onOrganize: (String) -> Unit = {},
     viewModel: ViewerViewModel = viewModel()
@@ -114,6 +174,7 @@ fun ViewerScreen(
     val search by viewModel.search.collectAsState()
     val selection by viewModel.selection.collectAsState()
     val edit by viewModel.edit.collectAsState()
+    val objectEdit by viewModel.objectEdit.collectAsState()
     val export by viewModel.export.collectAsState()
     val message by viewModel.message.collectAsState()
 
@@ -122,6 +183,32 @@ fun ViewerScreen(
     var query by rememberSaveable { mutableStateOf("") }
     var showForms by rememberSaveable { mutableStateOf(startWithForms) }
     var noteTarget by remember { mutableStateOf<Triple<Int, Float, Float>?>(null) }
+    var textTarget by remember { mutableStateOf<TextTarget?>(null) }
+    var pendingImageUri by remember { mutableStateOf<Uri?>(null) }
+    var replaceImageTarget by remember { mutableStateOf<EditableObject?>(null) }
+
+    val imagePicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.GetContent()
+    ) { uri ->
+        if (uri != null) {
+            val replace = replaceImageTarget
+            if (replace != null) {
+                viewModel.replaceImageObject(replace.id, uri.toString())
+                replaceImageTarget = null
+            } else {
+                pendingImageUri = uri
+                viewModel.setObjectTool(ObjectEditTool.IMAGE)
+            }
+        } else {
+            replaceImageTarget = null
+        }
+    }
+
+    val pickNewImage = {
+        replaceImageTarget = null
+        pendingImageUri = null
+        imagePicker.launch("image/*")
+    }
 
     val density = LocalDensity.current
     val screenWidthDp = LocalConfiguration.current.screenWidthDp
@@ -143,9 +230,13 @@ fun ViewerScreen(
     }
 
     LaunchedEffect(path) { viewModel.load(path) }
-    LaunchedEffect(path, startInEditMode, startWithForms, state.isLoading, state.pageCount) {
+    LaunchedEffect(path, startInEditMode, startWithForms, startEditTool, state.isLoading, state.pageCount) {
         if (startInEditMode && !state.isLoading && state.error == null && state.pageCount > 0) {
-            viewModel.setEditMode(true)
+            if (startEditTool.isNullOrBlank()) {
+                viewModel.setEditMode(true)
+            } else {
+                viewModel.startObjectEditing(startEditTool)
+            }
             if (startWithForms) showForms = true
         }
     }
@@ -194,16 +285,21 @@ fun ViewerScreen(
 
             if (edit.active) {
                 EditBar(
-                    tool = edit.tool,
+                    objectState = objectEdit,
+                    markupTool = edit.tool,
                     annotationCount = edit.annotations.size,
                     fieldCount = edit.fields.size,
                     showForms = showForms,
                     saving = edit.saving,
-                    hasChanges = edit.hasPendingChanges,
-                    onTool = viewModel::setTool,
-                    onUndo = viewModel::undoAnnotation,
-                    onClear = viewModel::clearAnnotations,
-                    onSave = viewModel::save,
+                    hasMarkupChanges = edit.hasPendingChanges,
+                    onObjectTool = viewModel::setObjectTool,
+                    onAddImage = pickNewImage,
+                    onMarkupTool = viewModel::setTool,
+                    onUndoObject = viewModel::undoObjectEdit,
+                    onRedoObject = viewModel::redoObjectEdit,
+                    onUndoMarkup = viewModel::undoAnnotation,
+                    onClearMarkup = viewModel::clearAnnotations,
+                    onSave = viewModel::saveAll,
                     onToggleForms = { showForms = !showForms }
                 )
                 if (showForms) {
@@ -258,6 +354,9 @@ fun ViewerScreen(
                                     edit.annotations.filter { it.pageIndex == index }
                                 }
                                 val inkDraft = edit.inkDraft?.takeIf { it.pageIndex == index }
+                                val pageObjects = remember(objectEdit.objects, index) {
+                                    objectEdit.objects.filter { it.pageIndex == index }
+                                }
                                 PageItem(
                                     index = index,
                                     box = boxes.getOrNull(index),
@@ -266,6 +365,9 @@ fun ViewerScreen(
                                     searchRects = searchRects,
                                     selectionRects = selectionRects,
                                     editTool = if (edit.active) edit.tool else null,
+                                    objectTool = if (edit.active) objectEdit.tool else null,
+                                    objects = pageObjects,
+                                    selectedObjectId = objectEdit.selectedId,
                                     annotations = pageAnnotations,
                                     inkDraft = inkDraft,
                                     targetPixelWidth = (screenWidthPx * renderZoom).roundToInt(),
@@ -275,7 +377,31 @@ fun ViewerScreen(
                                     onInkStart = viewModel::startInk,
                                     onInkExtend = viewModel::extendInk,
                                     onInkEnd = viewModel::finishInk,
-                                    onNoteTap = { i, fx, fy -> noteTarget = Triple(i, fx, fy) }
+                                    onNoteTap = { i, fx, fy -> noteTarget = Triple(i, fx, fy) },
+                                    onPlaceText = { i, fx, fy ->
+                                        textTarget = TextTarget(i, EditableBounds.around(fx, fy))
+                                    },
+                                    onPlaceImage = { i, fx, fy ->
+                                        val uri = pendingImageUri
+                                        if (uri == null) {
+                                            pickNewImage()
+                                        } else {
+                                            viewModel.addImageObject(
+                                                pageIndex = i,
+                                                bounds = EditableBounds.around(
+                                                    x = fx,
+                                                    y = fy,
+                                                    width = 0.5f,
+                                                    height = 0.34f
+                                                ),
+                                                contentUri = uri.toString()
+                                            )
+                                            pendingImageUri = null
+                                        }
+                                    },
+                                    onSelectObject = viewModel::selectObject,
+                                    onBoundsChange = viewModel::updateObjectBounds,
+                                    onClearObjectSelection = viewModel::clearObjectSelection
                                 )
                             }
                         }
@@ -284,6 +410,26 @@ fun ViewerScreen(
                 SnackbarHost(
                     hostState = snackbar,
                     modifier = Modifier.align(Alignment.BottomCenter)
+                )
+            }
+
+            val selectedObject = objectEdit.selected
+            if (selectedObject != null) {
+                SelectedObjectBar(
+                    objectState = selectedObject,
+                    onEditText = {
+                        textTarget = TextTarget(
+                            pageIndex = selectedObject.pageIndex,
+                            bounds = selectedObject.bounds,
+                            existing = selectedObject
+                        )
+                    },
+                    onReplaceImage = {
+                        replaceImageTarget = selectedObject
+                        imagePicker.launch("image/*")
+                    },
+                    onDelete = { viewModel.deleteObject(selectedObject.id) },
+                    onDone = viewModel::clearObjectSelection
                 )
             }
 
@@ -308,6 +454,28 @@ fun ViewerScreen(
             onConfirm = { text ->
                 viewModel.addNote(target.first, target.second, target.third, text)
                 noteTarget = null
+            }
+        )
+    }
+
+    val textEdit = textTarget
+    if (textEdit != null) {
+        TextObjectDialog(
+            existing = textEdit.existing,
+            onDismiss = { textTarget = null },
+            onConfirm = { content, style ->
+                val existing = textEdit.existing
+                if (existing == null) {
+                    viewModel.addTextObject(
+                        pageIndex = textEdit.pageIndex,
+                        bounds = textEdit.bounds,
+                        content = content,
+                        style = style
+                    )
+                } else {
+                    viewModel.updateTextObject(existing.id, content, style)
+                }
+                textTarget = null
             }
         )
     }
@@ -337,7 +505,7 @@ private fun ViewerToolbar(
     onEdit: () -> Unit,
     onOrganize: () -> Unit
 ) {
-    Surface(tonalElevation = 3.dp, modifier = Modifier.fillMaxWidth()) {
+    Surface(color = MaterialTheme.colorScheme.surface, modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 8.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -367,7 +535,7 @@ private fun ViewerToolbar(
                 TextButton(onClick = onZoomOut) { Text("−") }
                 TextButton(onClick = onZoomIn) { Text("+") }
                 TextButton(onClick = onFind) { Text(if (findActive) "Close" else "Find") }
-                TextButton(onClick = onEdit) { Text(if (editActive) "Done" else "Annotate") }
+                TextButton(onClick = onEdit) { Text(if (editActive) "Done" else "Edit") }
                 TextButton(onClick = onOrganize) { Text("Organize") }
             }
         }
@@ -376,54 +544,346 @@ private fun ViewerToolbar(
 
 @Composable
 private fun EditBar(
-    tool: AnnotationTool,
+    objectState: ObjectEditState,
+    markupTool: AnnotationTool,
     annotationCount: Int,
     fieldCount: Int,
     showForms: Boolean,
     saving: Boolean,
-    hasChanges: Boolean,
-    onTool: (AnnotationTool) -> Unit,
-    onUndo: () -> Unit,
-    onClear: () -> Unit,
+    hasMarkupChanges: Boolean,
+    onObjectTool: (ObjectEditTool) -> Unit,
+    onAddImage: () -> Unit,
+    onMarkupTool: (AnnotationTool) -> Unit,
+    onUndoObject: () -> Unit,
+    onRedoObject: () -> Unit,
+    onUndoMarkup: () -> Unit,
+    onClearMarkup: () -> Unit,
     onSave: () -> Unit,
     onToggleForms: () -> Unit
 ) {
-    Surface(tonalElevation = 2.dp, modifier = Modifier.fillMaxWidth()) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .horizontalScroll(rememberScrollState())
-                .padding(horizontal = 12.dp, vertical = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(4.dp)
-        ) {
-            ToolButton("Highlight", tool == AnnotationTool.HIGHLIGHT) { onTool(AnnotationTool.HIGHLIGHT) }
-            ToolButton("Ink", tool == AnnotationTool.INK) { onTool(AnnotationTool.INK) }
-            ToolButton("Note", tool == AnnotationTool.NOTE) { onTool(AnnotationTool.NOTE) }
-            Text("$annotationCount", style = MaterialTheme.typography.labelLarge)
-            TextButton(onClick = onUndo, enabled = annotationCount > 0) { Text("Undo") }
-            TextButton(onClick = onClear, enabled = annotationCount > 0) { Text("Clear") }
-            if (fieldCount > 0) {
-                TextButton(onClick = onToggleForms) {
-                    Text(if (showForms) "Hide fields" else "Fields ($fieldCount)")
-                }
+    Surface(color = MaterialTheme.colorScheme.surface, modifier = Modifier.fillMaxWidth()) {
+        Column {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState())
+                    .padding(horizontal = 8.dp, vertical = 4.dp)
+                    .testTag(UiTags.EDIT_TOOLBAR),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(2.dp)
+            ) {
+                EditAction(
+                    label = "Select",
+                    icon = Icons.Outlined.NearMe,
+                    selected = objectState.tool == ObjectEditTool.SELECT,
+                    tag = UiTags.EDIT_SELECT
+                ) { onObjectTool(ObjectEditTool.SELECT) }
+                EditAction(
+                    label = "Add text",
+                    icon = Icons.Outlined.TextFields,
+                    selected = objectState.tool == ObjectEditTool.TEXT,
+                    tag = UiTags.EDIT_ADD_TEXT
+                ) { onObjectTool(ObjectEditTool.TEXT) }
+                EditAction(
+                    label = "Add image",
+                    icon = Icons.Outlined.AddPhotoAlternate,
+                    selected = objectState.tool == ObjectEditTool.IMAGE,
+                    tag = UiTags.EDIT_ADD_IMAGE,
+                    onClick = onAddImage
+                )
+                EditAction(
+                    label = "Undo",
+                    icon = Icons.AutoMirrored.Outlined.Undo,
+                    enabled = objectState.canUndo,
+                    tag = UiTags.EDIT_UNDO,
+                    onClick = onUndoObject
+                )
+                EditAction(
+                    label = "Redo",
+                    icon = Icons.AutoMirrored.Outlined.Redo,
+                    enabled = objectState.canRedo,
+                    tag = UiTags.EDIT_REDO,
+                    onClick = onRedoObject
+                )
+                EditAction(
+                    label = "Save",
+                    icon = Icons.Outlined.Save,
+                    enabled = (objectState.dirty || hasMarkupChanges) && !saving,
+                    tag = UiTags.EDIT_SAVE,
+                    onClick = onSave
+                )
             }
-            TextButton(onClick = onSave, enabled = hasChanges && !saving) {
-                Text(if (saving) "Saving…" else "Save")
+            if (objectState.fake) {
+                Text(
+                    text = "Demo engine - text and image edits are simulated, not written to the PDF.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp)
+                )
+            }
+            HorizontalDivider(
+                thickness = 1.dp,
+                color = MaterialTheme.colorScheme.outlineVariant
+            )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState())
+                    .padding(horizontal = 12.dp, vertical = 2.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                ToolButton("Highlight", markupTool == AnnotationTool.HIGHLIGHT) {
+                    onMarkupTool(AnnotationTool.HIGHLIGHT)
+                }
+                ToolButton("Ink", markupTool == AnnotationTool.INK) {
+                    onMarkupTool(AnnotationTool.INK)
+                }
+                ToolButton("Note", markupTool == AnnotationTool.NOTE) {
+                    onMarkupTool(AnnotationTool.NOTE)
+                }
+                Text("$annotationCount", style = MaterialTheme.typography.labelLarge)
+                TextButton(onClick = onUndoMarkup, enabled = annotationCount > 0) { Text("Undo") }
+                TextButton(onClick = onClearMarkup, enabled = annotationCount > 0) { Text("Clear") }
+                if (fieldCount > 0) {
+                    TextButton(onClick = onToggleForms) {
+                        Text(if (showForms) "Hide fields" else "Fields ($fieldCount)")
+                    }
+                }
             }
         }
     }
 }
 
 @Composable
-private fun ToolButton(label: String, selected: Boolean, onClick: () -> Unit) {
-    if (selected) {
-        TextButton(onClick = onClick) {
-            Text(label, color = MaterialTheme.colorScheme.primary)
-        }
-    } else {
-        TextButton(onClick = onClick) { Text(label) }
+private fun EditAction(
+    label: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    selected: Boolean = false,
+    enabled: Boolean = true,
+    tag: String,
+    onClick: () -> Unit
+) {
+    val contentColor = when {
+        !enabled -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
+        selected -> MaterialTheme.colorScheme.surface
+        else -> MaterialTheme.colorScheme.onSurface
     }
+    Column(
+        modifier = Modifier
+            .testTag(tag)
+            .width(58.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .background(if (selected) MaterialTheme.colorScheme.onSurface else Color.Transparent)
+            .clickable(enabled = enabled, onClick = onClick)
+            .padding(vertical = 3.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = contentColor,
+            modifier = Modifier.size(20.dp)
+        )
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
+            color = contentColor,
+            maxLines = 2,
+            textAlign = TextAlign.Center
+        )
+    }
+}
+
+@Composable
+private fun ToolButton(label: String, selected: Boolean, onClick: () -> Unit) {
+    TextButton(
+        onClick = onClick,
+        colors = ButtonDefaults.textButtonColors(
+            containerColor = if (selected) {
+                MaterialTheme.colorScheme.onSurface
+            } else {
+                Color.Transparent
+            },
+            contentColor = if (selected) {
+                MaterialTheme.colorScheme.surface
+            } else {
+                MaterialTheme.colorScheme.onSurface
+            }
+        )
+    ) {
+        Text(label)
+    }
+}
+
+/** Actions for the object selected on the page. */
+@Composable
+private fun SelectedObjectBar(
+    objectState: EditableObject,
+    onEditText: () -> Unit,
+    onReplaceImage: () -> Unit,
+    onDelete: () -> Unit,
+    onDone: () -> Unit
+) {
+    Surface(color = MaterialTheme.colorScheme.surface, modifier = Modifier.fillMaxWidth()) {
+        Column {
+            HorizontalDivider(
+                thickness = 1.dp,
+                color = MaterialTheme.colorScheme.outlineVariant
+            )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 4.dp)
+                    .testTag(UiTags.EDIT_OBJECT_BAR),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                Icon(
+                    imageVector = if (objectState.type == EditableObjectType.TEXT) {
+                        Icons.Outlined.TextFields
+                    } else {
+                        Icons.Outlined.Photo
+                    },
+                    contentDescription = null,
+                    modifier = Modifier.size(20.dp)
+                )
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = if (objectState.type == EditableObjectType.TEXT) {
+                            "Text selected"
+                        } else {
+                            "Image selected"
+                        },
+                        style = MaterialTheme.typography.titleSmall
+                    )
+                    Text(
+                        text = "Drag to move. Corner handles resize.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                if (objectState.type == EditableObjectType.TEXT) {
+                    TextButton(onClick = onEditText) { Text("Edit text") }
+                } else {
+                    TextButton(onClick = onReplaceImage) { Text("Replace") }
+                }
+                TextButton(onClick = onDelete) { Text("Delete") }
+                TextButton(onClick = onDone) { Text("Done") }
+            }
+        }
+    }
+}
+
+private val TEXT_COLORS = listOf(
+    0xFF111111L to "Black",
+    0xFF444444L to "Charcoal",
+    0xFF777777L to "Grey"
+)
+
+/** Add/edit text with font, size and colour, all monochrome-friendly. */
+@Composable
+private fun TextObjectDialog(
+    existing: EditableObject?,
+    onDismiss: () -> Unit,
+    onConfirm: (String, EditableStyle) -> Unit
+) {
+    val initialStyle = existing?.style ?: EditableStyle()
+    var content by remember(existing?.id) { mutableStateOf(existing?.content.orEmpty()) }
+    var family by remember(existing?.id) { mutableStateOf(initialStyle.fontFamily) }
+    var fontSize by remember(existing?.id) { mutableFloatStateOf(initialStyle.fontSize) }
+    var color by remember(existing?.id) { mutableStateOf(initialStyle.color) }
+    var fontMenu by remember { mutableStateOf(false) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(if (existing == null) "Add text" else "Edit text") },
+        text = {
+            Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                OutlinedTextField(
+                    value = content,
+                    onValueChange = { content = it },
+                    label = { Text("Text") },
+                    minLines = 2,
+                    maxLines = 4,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Box(modifier = Modifier.padding(top = 12.dp)) {
+                    OutlinedButton(onClick = { fontMenu = true }) {
+                        Text("Font: ${family.label}")
+                    }
+                    DropdownMenu(
+                        expanded = fontMenu,
+                        onDismissRequest = { fontMenu = false }
+                    ) {
+                        EditFontFamily.entries.forEach { option ->
+                            DropdownMenuItem(
+                                text = { Text(option.label) },
+                                onClick = {
+                                    family = option
+                                    fontMenu = false
+                                }
+                            )
+                        }
+                    }
+                }
+                Text(
+                    text = "Size ${fontSize.roundToInt()}",
+                    style = MaterialTheme.typography.labelLarge,
+                    modifier = Modifier.padding(top = 12.dp)
+                )
+                Slider(
+                    value = fontSize,
+                    onValueChange = { fontSize = it },
+                    valueRange = 8f..48f
+                )
+                Text(
+                    text = "Colour",
+                    style = MaterialTheme.typography.labelLarge,
+                    modifier = Modifier.padding(top = 4.dp, bottom = 6.dp)
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                    for ((argb, label) in TEXT_COLORS) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Box(
+                                modifier = Modifier
+                                    .size(30.dp)
+                                    .border(
+                                        width = if (color == argb) 2.dp else 1.dp,
+                                        color = if (color == argb) {
+                                            MaterialTheme.colorScheme.onSurface
+                                        } else {
+                                            MaterialTheme.colorScheme.outline
+                                        },
+                                        shape = CircleShape
+                                    )
+                                    .padding(5.dp)
+                                    .background(Color(argb), CircleShape)
+                                    .clickable { color = argb }
+                            )
+                            Text(label, style = MaterialTheme.typography.labelSmall)
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    onConfirm(
+                        content.trim(),
+                        EditableStyle(family, fontSize, color)
+                    )
+                },
+                enabled = content.isNotBlank()
+            ) {
+                Text(if (existing == null) "Add" else "Apply")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        }
+    )
 }
 
 /** Editors for every AcroForm field (T12): text, checkbox, radio and choice. */
@@ -434,7 +894,7 @@ private fun FormPanel(
     loading: Boolean,
     onValue: (String, String) -> Unit
 ) {
-    Surface(tonalElevation = 1.dp, modifier = Modifier.fillMaxWidth()) {
+    Surface(color = MaterialTheme.colorScheme.surfaceVariant, modifier = Modifier.fillMaxWidth()) {
         when {
             loading -> Row(
                 modifier = Modifier.fillMaxWidth().padding(12.dp),
@@ -575,7 +1035,7 @@ private fun SelectionBar(
     onSelectAll: () -> Unit,
     onClear: () -> Unit
 ) {
-    Surface(tonalElevation = 3.dp, modifier = Modifier.fillMaxWidth()) {
+    Surface(color = MaterialTheme.colorScheme.surface, modifier = Modifier.fillMaxWidth()) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -607,6 +1067,9 @@ private fun PageItem(
     searchRects: List<TextRect>,
     selectionRects: List<TextRect>,
     editTool: AnnotationTool?,
+    objectTool: ObjectEditTool?,
+    objects: List<EditableObject>,
+    selectedObjectId: String?,
     annotations: List<AnnotationSpec>,
     inkDraft: InkDraft?,
     targetPixelWidth: Int,
@@ -616,21 +1079,45 @@ private fun PageItem(
     onInkStart: (Int, Float, Float) -> Unit,
     onInkExtend: (Float, Float) -> Unit,
     onInkEnd: () -> Unit,
-    onNoteTap: (Int, Float, Float) -> Unit
+    onNoteTap: (Int, Float, Float) -> Unit,
+    onPlaceText: (Int, Float, Float) -> Unit,
+    onPlaceImage: (Int, Float, Float) -> Unit,
+    onSelectObject: (String) -> Unit,
+    onBoundsChange: (String, EditableBounds) -> Unit,
+    onClearObjectSelection: () -> Unit
 ) {
     val aspect = remember(box) {
         val (w, h) = if (box != null) box.rotatedWidth to box.rotatedHeight else 612.0 to 792.0
         if (h > 0.0) (w / h).toFloat() else 612f / 792f
     }
 
-    val gesture = when (editTool) {
-        AnnotationTool.INK -> Modifier.inkGestures(
+    // The key handed to pointerInput must change whenever the active gesture
+    // changes. Sharing the Unit key meant switching from text selection to a
+    // note/text tap kept the old word-selection handler installed.
+    val gesture = when {
+        editTool == AnnotationTool.INK -> Modifier.inkGestures(
+            key = "ink-$index",
             onStart = { fx, fy -> onInkStart(index, fx, fy) },
             onExtend = onInkExtend,
             onEnd = onInkEnd
         )
-        AnnotationTool.NOTE -> Modifier.noteTapGesture { fx, fy -> onNoteTap(index, fx, fy) }
-        else -> Modifier.wordSelectionGestures { fx, fy, extend -> onSelect(index, fx, fy, extend) }
+        editTool == AnnotationTool.NOTE ->
+            Modifier.noteTapGesture(key = "note-$index") { fx, fy -> onNoteTap(index, fx, fy) }
+        objectTool == ObjectEditTool.TEXT ->
+            Modifier.noteTapGesture(key = ObjectEditTool.TEXT to objects) { fx, fy ->
+                if (objects.none { it.bounds.contains(fx, fy) }) onPlaceText(index, fx, fy)
+            }
+        objectTool == ObjectEditTool.IMAGE ->
+            Modifier.noteTapGesture(key = ObjectEditTool.IMAGE to objects) { fx, fy ->
+                if (objects.none { it.bounds.contains(fx, fy) }) onPlaceImage(index, fx, fy)
+            }
+        objectTool == ObjectEditTool.SELECT ->
+            Modifier.noteTapGesture(key = ObjectEditTool.SELECT to objects) { fx, fy ->
+                if (objects.none { it.bounds.contains(fx, fy) }) onClearObjectSelection()
+            }
+        else -> Modifier.wordSelectionGestures(key = "select-$index") { fx, fy, extend ->
+            onSelect(index, fx, fy, extend)
+        }
     }
 
     Box(
@@ -659,10 +1146,229 @@ private fun PageItem(
             )
             HighlightOverlay(plan, searchRects, selectionRects)
             PendingOverlay(plan, annotations, inkDraft)
+            ObjectLayer(
+                objects = objects,
+                selectedId = selectedObjectId,
+                editing = objectTool != null,
+                onSelect = onSelectObject,
+                onBoundsChange = onBoundsChange
+            )
         } else {
             CircularProgressIndicator(Modifier.size(28.dp))
         }
     }
+}
+
+/**
+ * Draws editable text and image objects over the page. Bounds are page
+ * fractions, so the same object stays put through zoom and re-render.
+ */
+@Composable
+private fun ObjectLayer(
+    objects: List<EditableObject>,
+    selectedId: String?,
+    editing: Boolean,
+    onSelect: (String) -> Unit,
+    onBoundsChange: (String, EditableBounds) -> Unit
+) {
+    if (objects.isEmpty()) return
+    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+        val pageWidth = constraints.maxWidth.toFloat().coerceAtLeast(1f)
+        val pageHeight = constraints.maxHeight.toFloat().coerceAtLeast(1f)
+        for (item in objects) {
+            EditableObjectBox(
+                item = item,
+                selected = editing && item.id == selectedId,
+                editing = editing,
+                pageWidth = pageWidth,
+                pageHeight = pageHeight,
+                onSelect = onSelect,
+                onBoundsChange = onBoundsChange
+            )
+        }
+    }
+}
+
+@Composable
+private fun EditableObjectBox(
+    item: EditableObject,
+    selected: Boolean,
+    editing: Boolean,
+    pageWidth: Float,
+    pageHeight: Float,
+    onSelect: (String) -> Unit,
+    onBoundsChange: (String, EditableBounds) -> Unit
+) {
+    val density = LocalDensity.current
+    var liveBounds by remember(item.id, item.bounds) { mutableStateOf(item.bounds) }
+    val handle = remember(item.id) { mutableStateOf(EditableHandle.NONE) }
+
+    val widthPx = (liveBounds.width * pageWidth).coerceAtLeast(1f)
+    val heightPx = (liveBounds.height * pageHeight).coerceAtLeast(1f)
+
+    Box(
+        modifier = Modifier
+            .offset {
+                IntOffset(
+                    (liveBounds.left * pageWidth).roundToInt(),
+                    (liveBounds.top * pageHeight).roundToInt()
+                )
+            }
+            .width(with(density) { widthPx.toDp() })
+            .height(with(density) { heightPx.toDp() })
+            .zIndex(if (selected) 2f else 1f)
+            .then(
+                if (selected) {
+                    Modifier.border(
+                        width = 2.dp,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        shape = RoundedCornerShape(2.dp)
+                    )
+                } else {
+                    Modifier
+                }
+            )
+            .then(
+                if (editing) {
+                    Modifier
+                        .pointerInput(item.id, selected, pageWidth, pageHeight) {
+                            detectTapGestures { onSelect(item.id) }
+                        }
+                        .pointerInput(item.id, selected, pageWidth, pageHeight) {
+                            detectDragGestures(
+                                onDragStart = { start ->
+                                    onSelect(item.id)
+                                    handle.value = if (selected) {
+                                        val grip = 28.dp.toPx()
+                                        when {
+                                            start.x <= grip && start.y <= grip ->
+                                                EditableHandle.TOP_LEFT
+                                            start.x >= size.width - grip && start.y <= grip ->
+                                                EditableHandle.TOP_RIGHT
+                                            start.x <= grip && start.y >= size.height - grip ->
+                                                EditableHandle.BOTTOM_LEFT
+                                            start.x >= size.width - grip && start.y >= size.height - grip ->
+                                                EditableHandle.BOTTOM_RIGHT
+                                            else -> EditableHandle.NONE
+                                        }
+                                    } else {
+                                        EditableHandle.NONE
+                                    }
+                                },
+                                onDrag = { change, drag ->
+                                    change.consume()
+                                    val dx = drag.x / pageWidth
+                                    val dy = drag.y / pageHeight
+                                    liveBounds = if (handle.value == EditableHandle.NONE) {
+                                        liveBounds.movedBy(dx, dy)
+                                    } else {
+                                        liveBounds.resized(handle.value, dx, dy)
+                                    }
+                                },
+                                onDragEnd = { onBoundsChange(item.id, liveBounds) },
+                                onDragCancel = { liveBounds = item.bounds }
+                            )
+                        }
+                } else {
+                    Modifier
+                }
+            )
+    ) {
+        EditableObjectContent(item = item, pagePixelWidth = pageWidth, compact = false)
+        if (selected) {
+            Canvas(modifier = Modifier.fillMaxSize()) {
+                val grip = 5.dp.toPx()
+                val points = listOf(
+                    Offset(0f, 0f),
+                    Offset(size.width, 0f),
+                    Offset(0f, size.height),
+                    Offset(size.width, size.height)
+                )
+                for (point in points) {
+                    drawRect(
+                        color = Color.Black,
+                        topLeft = Offset(point.x - grip, point.y - grip),
+                        size = Size(grip * 2f, grip * 2f)
+                    )
+                    drawRect(
+                        color = Color.White,
+                        topLeft = Offset(point.x - grip + 1f, point.y - grip + 1f),
+                        size = Size(grip * 2f - 2f, grip * 2f - 2f),
+                        style = Stroke(1f)
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun EditableObjectContent(
+    item: EditableObject,
+    pagePixelWidth: Float,
+    compact: Boolean
+) {
+    when (item.type) {
+        EditableObjectType.TEXT -> {
+            val size = (item.style.fontSize * pagePixelWidth / 612f)
+                .coerceAtLeast(7f)
+                .sp
+            Text(
+                text = item.content,
+                color = Color(item.style.color),
+                fontFamily = when (item.style.fontFamily) {
+                    EditFontFamily.SANS -> FontFamily.SansSerif
+                    EditFontFamily.SERIF -> FontFamily.Serif
+                    EditFontFamily.MONO -> FontFamily.Monospace
+                },
+                fontSize = size,
+                lineHeight = (size.value * 1.15f).sp,
+                maxLines = if (compact) 2 else 8,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.fillMaxSize().padding(2.dp)
+            )
+        }
+        EditableObjectType.IMAGE -> {
+            val bitmap = rememberUriImage(item.content)
+            if (bitmap != null) {
+                Image(
+                    bitmap = bitmap,
+                    contentDescription = "Placed image",
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier.fillMaxSize()
+                )
+            } else {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(MaterialTheme.colorScheme.surfaceVariant),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Outlined.Photo,
+                        contentDescription = "Placed image",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(28.dp)
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun rememberUriImage(uri: String): ImageBitmap? {
+    val context = LocalContext.current
+    val bitmap by produceState<ImageBitmap?>(initialValue = null, uri) {
+        value = withContext(Dispatchers.IO) {
+            runCatching {
+                context.contentResolver.openInputStream(Uri.parse(uri))?.use { stream ->
+                    BitmapFactory.decodeStream(stream)?.asImageBitmap()
+                }
+            }.getOrNull()
+        }
+    }
+    return bitmap
 }
 
 /** Search hits (yellow) and the selection (blue) drawn over the page bitmap. */
@@ -776,8 +1482,9 @@ private fun DrawScope.drawPolyline(plan: PageRenderPlan, points: List<Double>, c
  * parent, so scrolling still works.
  */
 private fun Modifier.wordSelectionGestures(
+    key: Any?,
     onSelect: (fx: Float, fy: Float, extend: Boolean) -> Unit
-): Modifier = pointerInput(Unit) {
+): Modifier = pointerInput(key) {
     fun fraction(offset: Offset): Pair<Float, Float> =
         offset.x / size.width.coerceAtLeast(1) to offset.y / size.height.coerceAtLeast(1)
 
@@ -819,10 +1526,11 @@ private fun Modifier.wordSelectionGestures(
  * it, so the whole finger path becomes one polyline (T12).
  */
 private fun Modifier.inkGestures(
+    key: Any?,
     onStart: (fx: Float, fy: Float) -> Unit,
     onExtend: (fx: Float, fy: Float) -> Unit,
     onEnd: () -> Unit
-): Modifier = pointerInput(Unit) {
+): Modifier = pointerInput(key) {
     fun fraction(offset: Offset): Pair<Float, Float> =
         offset.x / size.width.coerceAtLeast(1) to offset.y / size.height.coerceAtLeast(1)
 
@@ -847,7 +1555,10 @@ private fun Modifier.inkGestures(
 }
 
 /** Tap anywhere on the page to drop a sticky note there (T12). */
-private fun Modifier.noteTapGesture(onTap: (fx: Float, fy: Float) -> Unit): Modifier = pointerInput(Unit) {
+private fun Modifier.noteTapGesture(
+    key: Any?,
+    onTap: (fx: Float, fy: Float) -> Unit
+): Modifier = pointerInput(key) {
     fun fraction(offset: Offset): Pair<Float, Float> =
         offset.x / size.width.coerceAtLeast(1) to offset.y / size.height.coerceAtLeast(1)
 
@@ -894,3 +1605,81 @@ private fun Modifier.pinchToZoom(onZoom: (Float) -> Unit): Modifier = pointerInp
         }
     }
 }
+
+@Preview(showBackground = true, widthDp = 411, heightDp = 891, name = "Viewer edit mode - light")
+@Composable
+private fun ViewerEditModeLightPreview() {
+    PDFPaperTheme(darkTheme = false) {
+        val sample = EditableObject(
+            id = "preview-text",
+            type = EditableObjectType.TEXT,
+            pageIndex = 0,
+            bounds = EditableBounds(0.12f, 0.22f, 0.72f, 0.32f),
+            content = "Project notes",
+            style = EditableStyle(fontSize = 26f, color = 0xFF111111)
+        )
+        val objectState = ObjectEditState(
+            objects = listOf(sample),
+            selectedId = sample.id,
+            tool = ObjectEditTool.SELECT,
+            canUndo = true,
+            canRedo = false,
+            dirty = true,
+            fake = true,
+            engineName = "FakeEngine (demo)"
+        )
+        Column(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+            ViewerToolbar(
+                title = "Project notes.pdf",
+                pageLabel = "1 / 8",
+                zoom = 1f,
+                findActive = false,
+                editActive = true,
+                onBack = {},
+                onZoomIn = {},
+                onZoomOut = {},
+                onFit = {},
+                onFind = {},
+                onEdit = {},
+                onOrganize = {}
+            )
+            EditBar(
+                objectState = objectState,
+                markupTool = AnnotationTool.HIGHLIGHT,
+                annotationCount = 2,
+                fieldCount = 0,
+                showForms = false,
+                saving = false,
+                hasMarkupChanges = false,
+                onObjectTool = {},
+                onAddImage = {},
+                onMarkupTool = {},
+                onUndoObject = {},
+                onRedoObject = {},
+                onUndoMarkup = {},
+                onClearMarkup = {},
+                onSave = {},
+                onToggleForms = {}
+            )
+            Box(modifier = Modifier.fillMaxWidth().weight(1f).padding(12.dp)) {
+                Box(modifier = Modifier.fillMaxSize().background(Color.White)) {
+                    ObjectLayer(
+                        objects = listOf(sample),
+                        selectedId = sample.id,
+                        editing = true,
+                        onSelect = {},
+                        onBoundsChange = { _, _ -> }
+                    )
+                }
+            }
+            SelectedObjectBar(
+                objectState = sample,
+                onEditText = {},
+                onReplaceImage = {},
+                onDelete = {},
+                onDone = {}
+            )
+        }
+    }
+}
+

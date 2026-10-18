@@ -50,10 +50,12 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.pdfpaper.app.data.copyPdfToCache
 import com.pdfpaper.app.ui.PasswordDialog
+import com.pdfpaper.app.ui.theme.PDFPaperTheme
 import com.pdfpaper.engine.render.PageBox
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -210,7 +212,7 @@ private fun OrganizerToolbar(
     onClearSelection: () -> Unit,
     onReset: () -> Unit
 ) {
-    Surface(tonalElevation = 3.dp, modifier = Modifier.fillMaxWidth()) {
+    Surface(color = MaterialTheme.colorScheme.surface, modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = onBack) {
@@ -251,7 +253,7 @@ private fun OrganizerActions(
     onAddPdf: () -> Unit,
     onSplit: () -> Unit
 ) {
-    Surface(tonalElevation = 3.dp, modifier = Modifier.fillMaxWidth()) {
+    Surface(color = MaterialTheme.colorScheme.surface, modifier = Modifier.fillMaxWidth()) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -326,3 +328,50 @@ private fun PageCell(
         }
     }
 }
+
+@Preview(showBackground = true, widthDp = 411, heightDp = 891)
+@Composable
+private fun PagesScreenLightPreview() {
+    PDFPaperTheme(darkTheme = false) {
+        Surface(modifier = Modifier.fillMaxSize()) {
+            Column(modifier = Modifier.fillMaxSize()) {
+                OrganizerToolbar(
+                    title = "Project notes.pdf",
+                    pageCount = 8,
+                    selectedCount = 2,
+                    canUndo = true,
+                    canRedo = false,
+                    onBack = {},
+                    onUndo = {},
+                    onRedo = {},
+                    onSelectAll = {},
+                    onClearSelection = {},
+                    onReset = {}
+                )
+                Box(
+                    modifier = Modifier.weight(1f).fillMaxWidth().padding(16.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = "Page thumbnails",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                OrganizerActions(
+                    enabled = true,
+                    onRotateLeft = {},
+                    onRotateRight = {},
+                    onMoveUp = {},
+                    onMoveDown = {},
+                    onDelete = {},
+                    onExtract = {},
+                    onSave = {},
+                    onAddPdf = {},
+                    onSplit = {}
+                )
+            }
+        }
+    }
+}
+

@@ -28,9 +28,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.pdfpaper.app.ui.UiTags
 import com.pdfpaper.app.ui.components.AppTopBar
+import com.pdfpaper.app.ui.theme.PDFPaperTheme
 import com.pdfpaper.engine.io.FileSource
 import com.pdfpaper.engine.model.PdfDocument
 import com.pdfpaper.engine.page.pages
@@ -150,6 +152,34 @@ private fun InfoRow(label: String, value: String) {
             style = MaterialTheme.typography.bodyMedium,
             fontWeight = FontWeight.Medium
         )
+    }
+}
+
+@Preview(showBackground = true, widthDp = 411, heightDp = 720)
+@Composable
+private fun InfoScreenLightPreview() {
+    PDFPaperTheme(darkTheme = false) {
+        Surface(modifier = Modifier.fillMaxSize().testTag(UiTags.INFO_SCREEN)) {
+            Column(modifier = Modifier.fillMaxSize()) {
+                AppTopBar(
+                    title = "Document info",
+                    subtitle = "Project notes.pdf",
+                    onBack = {}
+                )
+                InfoBody(
+                    info = PdfInfo(
+                        name = "Project notes.pdf",
+                        sizeBytes = 1_240_000,
+                        pageCount = 8,
+                        version = "1.7",
+                        encrypted = false,
+                        rebuilt = false,
+                        objectCount = 214
+                    ),
+                    sizeLabel = "1.2 MB"
+                )
+            }
+        }
     }
 }
 

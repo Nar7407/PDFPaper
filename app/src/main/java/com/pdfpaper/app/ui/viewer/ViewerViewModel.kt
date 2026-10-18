@@ -5,6 +5,11 @@ import android.graphics.Bitmap
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.pdfpaper.app.edit.EditableBounds
+import com.pdfpaper.app.edit.EditableObject
+import com.pdfpaper.app.edit.EditableStyle
+import com.pdfpaper.app.edit.EditingRuntime
+import com.pdfpaper.app.edit.PdfEngine
 import com.pdfpaper.app.render.PageBitmapRenderer
 import com.pdfpaper.engine.annot.AnnotationSpec
 import com.pdfpaper.engine.annot.InkSpec
@@ -77,6 +82,24 @@ data class ViewerSelection(
 /** Annotation tool selected in the viewer's edit mode (T12). */
 enum class AnnotationTool { HIGHLIGHT, INK, NOTE }
 
+/** Object-editing tool selected in the viewer's Edit toolbar. */
+enum class ObjectEditTool { NONE, SELECT, TEXT, IMAGE }
+
+/** Objects exposed by the app-side [PdfEngine] edit contract. */
+data class ObjectEditState(
+    val objects: List<EditableObject> = emptyList(),
+    val selectedId: String? = null,
+    val tool: ObjectEditTool = ObjectEditTool.NONE,
+    val canUndo: Boolean = false,
+    val canRedo: Boolean = false,
+    val dirty: Boolean = false,
+    val fake: Boolean = false,
+    val engineName: String = "",
+    val saving: Boolean = false
+) {
+    val selected: EditableObject? get() = objects.firstOrNull { it.id == selectedId }
+}
+
 /** A freehand stroke still being drawn, in page user space. */
 data class InkDraft(val pageIndex: Int, val points: List<Double>)
 
@@ -139,6 +162,20 @@ class ViewerViewModel(application: Application) : AndroidViewModel(application) 
     /** Annotation/form edit mode (T12). */
     private val _edit = MutableStateFlow(ViewerEditState())
     val edit: StateFlow<ViewerEditState> = _edit.asStateFlow()
+
+    /**
+     * Object editing goes through the app-side [PdfEngine] contract. Debug
+     * builds get the in-memory demonstration engine; release builds get an
+     * honest "coming soon" implementation until :engine exposes content edits.
+     */
+    private val objectEngine: PdfEngine = EditingRuntime.create(getApplication())
+    private val _objectEdit = MutableStateFlow(
+        ObjectEditState(
+            fake = objectEngine.isFake,
+            engineName = objectEngine.name
+        )
+    )
+    val objectEdit: StateFlow<ObjectEditState> = _objectEdit.asStateFlow()
 
     /** Bytes produced by [save], waiting for a SAF destination. */
     private val _export = MutableStateFlow<ViewerExport?>(null)
@@ -392,10 +429,172 @@ class ViewerViewModel(application: Application) : AndroidViewModel(application) 
     /** Turns edit mode on/off; entering it lazily loads the form fields. */
     fun setEditMode(active: Boolean) {
         _edit.update { it.copy(active = active, inkDraft = if (active) it.inkDraft else null) }
+        _objectEdit.update {
+            it.copy(
+                tool = if (active) ObjectEditTool.SELECT else ObjectEditTool.NONE,
+                selectedId = if (active) it.selectedId else null
+            )
+        }
         if (active) ensureFieldsLoaded()
     }
 
-    fun setTool(tool: AnnotationTool) = _edit.update { it.copy(tool = tool) }
+    /** Selects an annotation tool; this also leaves object-edit mode. */
+    fun setTool(tool: AnnotationTool) {
+        _edit.update { it.copy(tool = tool) }
+        _objectEdit.update { it.copy(tool = ObjectEditTool.NONE) }
+    }
+
+    /** Chooses an object tool without changing the markup tool. */
+    fun setObjectTool(tool: ObjectEditTool) {
+        _objectEdit.update {
+            it.copy(
+                tool = tool,
+                selectedId = if (tool == ObjectEditTool.TEXT || tool == ObjectEditTool.IMAGE) {
+                    null
+                } else {
+                    it.selectedId
+                }
+            )
+        }
+    }
+
+    /** Maps a tool id from All tools to the viewer's initial object mode. */
+    fun startObjectEditing(toolId: String?) {
+        _edit.update { it.copy(active = true) }
+        _objectEdit.update {
+            it.copy(
+                tool = when (toolId) {
+                    "text" -> ObjectEditTool.TEXT
+                    "image" -> ObjectEditTool.IMAGE
+                    else -> ObjectEditTool.SELECT
+                }
+            )
+        }
+        ensureFieldsLoaded()
+    }
+
+    fun selectObject(id: String) = _objectEdit.update { it.copy(selectedId = id) }
+
+    fun clearObjectSelection() = _objectEdit.update { it.copy(selectedId = null) }
+
+    /**
+     * Adds a text object through [PdfEngine]. [bounds] uses page fractions so
+     * it survives zoom and re-rendering.
+     */
+    fun addTextObject(
+        pageIndex: Int,
+        bounds: EditableBounds,
+        content: String,
+        style: EditableStyle
+    ): EditableObject? {
+        if (!objectEngine.capabilities.addText) {
+            _message.value = "Add text is coming soon: the PDF engine has no content-editing API yet"
+            return null
+        }
+        val created = objectEngine.addText(pageIndex, bounds, content, style) ?: return null
+        publishObjects(selectedId = created.id)
+        _objectEdit.update { it.copy(tool = ObjectEditTool.SELECT) }
+        return created
+    }
+
+    fun addImageObject(
+        pageIndex: Int,
+        bounds: EditableBounds,
+        contentUri: String
+    ): EditableObject? {
+        if (!objectEngine.capabilities.addImage) {
+            _message.value = "Add image is coming soon: the PDF engine has no content-editing API yet"
+            return null
+        }
+        val created = objectEngine.addImage(
+            pageIndex = pageIndex,
+            bounds = bounds,
+            contentUri = contentUri,
+            style = EditableStyle()
+        ) ?: return null
+        publishObjects(selectedId = created.id)
+        _objectEdit.update { it.copy(tool = ObjectEditTool.SELECT) }
+        return created
+    }
+
+    fun updateTextObject(id: String, content: String, style: EditableStyle) {
+        objectEngine.updateText(id, content, style) ?: return
+        publishObjects(selectedId = id)
+    }
+
+    fun replaceImageObject(id: String, contentUri: String) {
+        objectEngine.updateImage(id, contentUri) ?: return
+        publishObjects(selectedId = id)
+    }
+
+    fun updateObjectBounds(id: String, bounds: EditableBounds) {
+        objectEngine.updateBounds(id, bounds) ?: return
+        publishObjects(selectedId = id)
+    }
+
+    fun deleteObject(id: String) {
+        if (!objectEngine.delete(id)) return
+        publishObjects(selectedId = null)
+    }
+
+    fun undoObjectEdit() {
+        if (!objectEngine.undo()) return
+        publishObjects(dirty = true)
+    }
+
+    fun redoObjectEdit() {
+        if (!objectEngine.redo()) return
+        publishObjects(dirty = true)
+    }
+
+    /** Saves object edits when the engine can; FakeEngine only marks the demo. */
+    fun saveObjectEdits() {
+        val current = _objectEdit.value
+        if (!current.dirty) {
+            _message.value = "No object edits to save yet"
+            return
+        }
+        if (!objectEngine.capabilities.save || !objectEngine.save()) {
+            _message.value = "Saving objects is coming soon: the PDF engine cannot write them yet"
+            return
+        }
+        _objectEdit.update { it.copy(dirty = false) }
+        _message.value = if (objectEngine.isFake) {
+            "Demo save: text and image edits are simulated and were not written to the PDF"
+        } else {
+            "Saved"
+        }
+    }
+
+    /** Save button for the object toolbar: handles markup and object edits. */
+    fun saveAll() {
+        val objectDirty = _objectEdit.value.dirty
+        val markupDirty = _edit.value.hasPendingChanges
+        if (!objectDirty && !markupDirty) {
+            _message.value = "Nothing to save yet"
+            return
+        }
+        if (objectDirty) saveObjectEdits()
+        if (markupDirty) save()
+    }
+
+    private fun publishObjects(
+        selectedId: String? = _objectEdit.value.selectedId,
+        dirty: Boolean = true
+    ) {
+        val objects = objectEngine.allObjects()
+        _objectEdit.update {
+            it.copy(
+                objects = objects,
+                selectedId = selectedId?.takeIf { id -> objects.any { obj -> obj.id == id } },
+                canUndo = objectEngine.canUndo,
+                canRedo = objectEngine.canRedo,
+                dirty = it.dirty || dirty,
+                fake = objectEngine.isFake,
+                engineName = objectEngine.name
+            )
+        }
+    }
 
     /** Turns the current selection into a highlight annotation, then clears it. */
     fun highlightSelection() {
@@ -556,6 +755,11 @@ class ViewerViewModel(application: Application) : AndroidViewModel(application) 
         _plans.value = emptyMap()
         _selection.value = null
         _edit.value = ViewerEditState()
+        objectEngine.clear()
+        _objectEdit.value = ObjectEditState(
+            fake = objectEngine.isFake,
+            engineName = objectEngine.name
+        )
         _export.value = null
         cache.clear()
         layouts.clear()
@@ -584,6 +788,11 @@ class ViewerViewModel(application: Application) : AndroidViewModel(application) 
         layouts.clear()
         fieldsLoaded = false
         _edit.value = ViewerEditState()
+        objectEngine.clear()
+        _objectEdit.value = ObjectEditState(
+            fake = objectEngine.isFake,
+            engineName = objectEngine.name
+        )
         _export.value = null
     }
 

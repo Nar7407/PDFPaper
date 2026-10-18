@@ -17,5 +17,16 @@ object UiTags {
     const val TOOL_DETAIL_TITLE = "tool_detail_title"
     const val RECENT_LIST = "recent_list"
 
+    const val EDIT_TOOLBAR = "edit_toolbar"
+    const val EDIT_SELECT = "edit_select"
+    const val EDIT_ADD_TEXT = "edit_add_text"
+    const val EDIT_ADD_IMAGE = "edit_add_image"
+    const val EDIT_UNDO = "edit_undo"
+    const val EDIT_REDO = "edit_redo"
+    const val EDIT_SAVE = "edit_save"
+    const val EDIT_OBJECT_BAR = "edit_object_bar"
+
     fun toolCard(id: String): String = "tool_card_$id"
+
+    fun objectBox(id: String): String = "object_$id"
 }

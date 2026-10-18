@@ -1,5 +1,6 @@
 package com.pdfpaper.app.ui.recent
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -14,7 +15,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.filled.List
@@ -23,7 +24,6 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -37,13 +37,14 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.pdfpaper.app.data.CachedPdf
 import com.pdfpaper.app.data.RecentCodec
 import com.pdfpaper.app.data.RecentFile
 import com.pdfpaper.app.ui.UiTags
-import com.pdfpaper.app.ui.components.AppTopBar
+import com.pdfpaper.app.ui.theme.PDFPaperTheme
 
 @Composable
 fun RecentScreen(
@@ -60,21 +61,53 @@ fun RecentScreen(
         }
     }
 
-    Surface(modifier = Modifier.fillMaxSize().testTag(UiTags.RECENT_SCREEN)) {
+    RecentContent(
+        state = state,
+        onOpen = viewModel::open,
+        onClear = viewModel::clear,
+        onDismissError = viewModel::dismissError
+    )
+}
+
+@Composable
+private fun RecentContent(
+    state: RecentUiState,
+    onOpen: (RecentFile) -> Unit,
+    onClear: () -> Unit,
+    onDismissError: () -> Unit
+) {
+    Surface(
+        color = MaterialTheme.colorScheme.background,
+        modifier = Modifier.fillMaxSize().testTag(UiTags.RECENT_SCREEN)
+    ) {
         Column(modifier = Modifier.fillMaxSize()) {
-            AppTopBar(
-                title = "Recent",
-                subtitle = if (state.items.isEmpty()) {
-                    "Recently opened documents"
-                } else {
-                    "${state.items.size} of ${RecentCodec.MAX_RECENT} documents"
-                },
-                actions = {
-                    if (state.items.isNotEmpty()) {
-                        TextButton(onClick = viewModel::clear) { Text("Clear") }
-                    }
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 20.dp, end = 8.dp, top = 22.dp, bottom = 10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Recent",
+                        style = MaterialTheme.typography.headlineMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = if (state.items.isEmpty()) {
+                            "Recently opened documents"
+                        } else {
+                            "${state.items.size} of ${RecentCodec.MAX_RECENT} documents"
+                        },
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 4.dp)
+                    )
                 }
-            )
+                if (state.items.isNotEmpty()) {
+                    TextButton(onClick = onClear) { Text("Clear") }
+                }
+            }
             if (state.loading) {
                 LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
             }
@@ -84,10 +117,10 @@ fun RecentScreen(
                     else -> LazyColumn(
                         modifier = Modifier.fillMaxSize().testTag(UiTags.RECENT_LIST),
                         contentPadding = PaddingValues(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         items(state.items, key = { it.uri }) { recent ->
-                            RecentRow(recent = recent, onClick = { viewModel.open(recent) })
+                            RecentRow(recent = recent, onClick = { onOpen(recent) })
                         }
                     }
                 }
@@ -102,18 +135,13 @@ fun RecentScreen(
                             modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Icon(
-                                Icons.Filled.Info,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.error
-                            )
+                            Icon(Icons.Filled.Info, contentDescription = null)
                             Text(
                                 text = error,
-                                color = MaterialTheme.colorScheme.error,
                                 style = MaterialTheme.typography.bodySmall,
                                 modifier = Modifier.weight(1f).padding(start = 10.dp)
                             )
-                            TextButton(onClick = viewModel::dismissError) { Text("Dismiss") }
+                            TextButton(onClick = onDismissError) { Text("Dismiss") }
                         }
                     }
                 }
@@ -124,7 +152,10 @@ fun RecentScreen(
 
 @Composable
 private fun RecentRow(recent: RecentFile, onClick: () -> Unit) {
-    OutlinedCard(
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
         modifier = Modifier.fillMaxWidth().clickable(role = Role.Button, onClick = onClick)
     ) {
         Row(
@@ -132,15 +163,15 @@ private fun RecentRow(recent: RecentFile, onClick: () -> Unit) {
             verticalAlignment = Alignment.CenterVertically
         ) {
             Surface(
-                shape = CircleShape,
-                color = MaterialTheme.colorScheme.secondaryContainer,
+                shape = RoundedCornerShape(9.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant,
                 modifier = Modifier.size(44.dp)
             ) {
                 Box(contentAlignment = Alignment.Center) {
                     Icon(
                         imageVector = Icons.AutoMirrored.Filled.List,
                         contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onSecondaryContainer
+                        tint = MaterialTheme.colorScheme.onSurface
                     )
                 }
             }
@@ -178,7 +209,7 @@ private fun EmptyRecent() {
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Surface(
-                shape = CircleShape,
+                shape = RoundedCornerShape(12.dp),
                 color = MaterialTheme.colorScheme.surfaceVariant,
                 modifier = Modifier.size(72.dp)
             ) {
@@ -202,5 +233,23 @@ private fun EmptyRecent() {
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
+    }
+}
+
+@Preview(showBackground = true, widthDp = 411, heightDp = 720)
+@Composable
+private fun RecentScreenLightPreview() {
+    PDFPaperTheme(darkTheme = false) {
+        RecentContent(
+            state = RecentUiState(
+                items = listOf(
+                    RecentFile("content://demo/report.pdf", "Quarterly report.pdf"),
+                    RecentFile("content://demo/notes.pdf", "Meeting notes.pdf")
+                )
+            ),
+            onOpen = {},
+            onClear = {},
+            onDismissError = {}
+        )
     }
 }

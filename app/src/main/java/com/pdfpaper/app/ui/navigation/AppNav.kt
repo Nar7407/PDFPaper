@@ -1,20 +1,27 @@
 package com.pdfpaper.app.ui.navigation
 
+import android.content.pm.ApplicationInfo
 import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Build
-import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material3.Icon
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
+import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
@@ -23,8 +30,11 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
-import com.pdfpaper.app.ui.UiTags
+import com.pdfpaper.app.edit.EditingRuntime
+import com.pdfpaper.app.ui.components.AppBottomBar
+import com.pdfpaper.app.ui.components.WorkspaceHeader
 import com.pdfpaper.app.ui.home.HomeScreen
+import com.pdfpaper.app.ui.home.HomeViewModel
 import com.pdfpaper.app.ui.pages.PagesScreen
 import com.pdfpaper.app.ui.recent.RecentScreen
 import com.pdfpaper.app.ui.tools.InfoScreen
@@ -46,9 +56,11 @@ object Routes {
     fun viewer(
         path: String,
         startInEdit: Boolean = false,
-        startWithForms: Boolean = false
+        startWithForms: Boolean = false,
+        startEditTool: String? = null
     ): String =
-        "$VIEWER?path=${Uri.encode(path)}&edit=$startInEdit&forms=$startWithForms"
+        "$VIEWER?path=${Uri.encode(path)}&edit=$startInEdit&forms=$startWithForms" +
+            "&tool=${Uri.encode(startEditTool.orEmpty())}"
 
     fun pages(path: String, hint: String? = null): String {
         val base = "$PAGES?path=${Uri.encode(path)}"
@@ -62,25 +74,56 @@ object Routes {
 fun AppNav(navController: NavHostController = rememberNavController()) {
     val backStackEntry by navController.currentBackStackEntryAsState()
     val route = backStackEntry?.destination?.route
-    val showBottomBar = route == Routes.HOME ||
+    val showWorkspaceHeader = route == Routes.HOME ||
         route == Routes.TOOLS ||
-        route == Routes.RECENT ||
-        route == Routes.TOOL
+        route == Routes.RECENT
+
+    val context = LocalContext.current
+    val homeViewModel: HomeViewModel = viewModel()
+    val homeState by homeViewModel.state.collectAsState()
+    val debuggable = remember(context) {
+        (context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
+    }
+    var showDebugMenu by remember { mutableStateOf(false) }
+
+    // One picker for the whole workspace, so Open works from the header and
+    // from the Home card and both land in the same viewer route.
+    val picker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri == null) {
+            homeViewModel.onPickerCancelled()
+        } else {
+            homeViewModel.onDocumentPicked(context, uri)
+        }
+    }
+
+    LaunchedEffect(homeState.pendingNavigation) {
+        homeState.pendingNavigation?.let { cached ->
+            navController.navigate(Routes.viewer(cached.file.absolutePath))
+            homeViewModel.onNavigationConsumed()
+        }
+    }
 
     Scaffold(
+        topBar = {
+            if (showWorkspaceHeader) {
+                WorkspaceHeader(
+                    onOpen = { picker.launch(arrayOf("application/pdf")) },
+                    onSearch = { navController.navigateTopLevel(Routes.TOOLS) },
+                    onDebug = if (debuggable) {
+                        { showDebugMenu = true }
+                    } else {
+                        null
+                    }
+                )
+            }
+        },
         bottomBar = {
-            if (showBottomBar) {
+            if (showWorkspaceHeader) {
                 AppBottomBar(
                     currentRoute = route,
-                    onNavigate = { destination ->
-                        navController.navigate(destination) {
-                            popUpTo(navController.graph.findStartDestination().id) {
-                                saveState = true
-                            }
-                            launchSingleTop = true
-                            restoreState = true
-                        }
-                    }
+                    onNavigate = { destination -> navController.navigateTopLevel(destination) }
                 )
             }
         }
@@ -92,11 +135,11 @@ fun AppNav(navController: NavHostController = rememberNavController()) {
         ) {
             composable(Routes.HOME) {
                 HomeScreen(
-                    onOpenViewer = { cached ->
-                        navController.navigate(Routes.viewer(cached.file.absolutePath))
-                    },
+                    onOpen = { picker.launch(arrayOf("application/pdf")) },
                     onBrowseTools = { navController.navigateTopLevel(Routes.TOOLS) },
-                    onBrowseRecent = { navController.navigateTopLevel(Routes.RECENT) }
+                    onBrowseRecent = { navController.navigateTopLevel(Routes.RECENT) },
+                    onOpenTool = { tool -> navController.navigate(Routes.tool(tool.id)) },
+                    viewModel = homeViewModel
                 )
             }
             composable(Routes.TOOLS) {
@@ -123,14 +166,14 @@ fun AppNav(navController: NavHostController = rememberNavController()) {
                     onOpenOrganizer = { path, hint ->
                         navController.navigate(Routes.pages(path, hint))
                     },
-                    onOpenViewer = { path, edit, forms ->
-                        navController.navigate(Routes.viewer(path, edit, forms))
+                    onOpenViewer = { path, edit, forms, editTool ->
+                        navController.navigate(Routes.viewer(path, edit, forms, editTool))
                     },
                     onOpenInfo = { path -> navController.navigate(Routes.info(path)) }
                 )
             }
             composable(
-                route = "${Routes.VIEWER}?path={path}&edit={edit}&forms={forms}",
+                route = "${Routes.VIEWER}?path={path}&edit={edit}&forms={forms}&tool={tool}",
                 arguments = listOf(
                     navArgument("path") {
                         type = NavType.StringType
@@ -143,6 +186,10 @@ fun AppNav(navController: NavHostController = rememberNavController()) {
                     navArgument("forms") {
                         type = NavType.BoolType
                         defaultValue = false
+                    },
+                    navArgument("tool") {
+                        type = NavType.StringType
+                        defaultValue = ""
                     }
                 )
             ) { entry ->
@@ -150,6 +197,7 @@ fun AppNav(navController: NavHostController = rememberNavController()) {
                     path = entry.arguments?.getString("path").orEmpty(),
                     startInEditMode = entry.arguments?.getBoolean("edit") ?: false,
                     startWithForms = entry.arguments?.getBoolean("forms") ?: false,
+                    startEditTool = entry.arguments?.getString("tool").orEmpty(),
                     onBack = { navController.popBackStack() },
                     onOrganize = { path -> navController.navigate(Routes.pages(path)) }
                 )
@@ -189,6 +237,38 @@ fun AppNav(navController: NavHostController = rememberNavController()) {
             }
         }
     }
+
+    if (showDebugMenu) {
+        AlertDialog(
+            onDismissRequest = { showDebugMenu = false },
+            title = { Text("Debug") },
+            text = {
+                Column {
+                    Text(
+                        text = if (debuggable) {
+                            "Editing engine: FakeEngine (demo)"
+                        } else {
+                            "Editing engine: PDF engine (coming soon)"
+                        },
+                        style = MaterialTheme.typography.titleSmall
+                    )
+                    Text(
+                        text = if (debuggable) {
+                            EditingRuntime.DEMO_NOTICE
+                        } else {
+                            "Text and image editing will be enabled when the PDF " +
+                                "engine exposes a content-editing API."
+                        },
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.padding(top = 8.dp)
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showDebugMenu = false }) { Text("Close") }
+            }
+        )
+    }
 }
 
 private fun NavHostController.navigateTopLevel(destination: String) {
@@ -196,32 +276,5 @@ private fun NavHostController.navigateTopLevel(destination: String) {
         popUpTo(graph.findStartDestination().id) { saveState = true }
         launchSingleTop = true
         restoreState = true
-    }
-}
-
-@Composable
-private fun AppBottomBar(currentRoute: String?, onNavigate: (String) -> Unit) {
-    NavigationBar {
-        NavigationBarItem(
-            selected = currentRoute == Routes.HOME,
-            onClick = { onNavigate(Routes.HOME) },
-            icon = { Icon(Icons.Filled.Home, contentDescription = null) },
-            label = { Text("Home") },
-            modifier = Modifier.testTag(UiTags.NAV_HOME)
-        )
-        NavigationBarItem(
-            selected = currentRoute == Routes.TOOLS || currentRoute == Routes.TOOL,
-            onClick = { onNavigate(Routes.TOOLS) },
-            icon = { Icon(Icons.Filled.Build, contentDescription = null) },
-            label = { Text("Tools") },
-            modifier = Modifier.testTag(UiTags.NAV_TOOLS)
-        )
-        NavigationBarItem(
-            selected = currentRoute == Routes.RECENT,
-            onClick = { onNavigate(Routes.RECENT) },
-            icon = { Icon(Icons.Filled.Refresh, contentDescription = null) },
-            label = { Text("Recent") },
-            modifier = Modifier.testTag(UiTags.NAV_RECENT)
-        )
     }
 }

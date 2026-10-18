@@ -90,6 +90,9 @@ dependencies {
     implementation("androidx.compose.foundation:foundation")
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-core")
+    // Task-requested tool icons. Apache License 2.0, same as Compose; it ships
+    // the extended Material icon set locally (no runtime service or account).
+    implementation("androidx.compose.material:material-icons-extended")
 
     // Pure-Kotlin PDF engine (no Android dependencies); added in T9 so the
     // viewer can parse documents and build display lists in-process.

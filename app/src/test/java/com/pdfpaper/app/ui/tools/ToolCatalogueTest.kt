@@ -10,8 +10,10 @@ class ToolCatalogueTest {
     fun blankSearchReturnsTheWholeCatalogueInOrder() {
         assertEquals(
             listOf(
-                "merge", "split", "rotate", "reorder", "delete",
-                "extract", "annotate", "fill-form", "encrypt", "info"
+                "merge", "split", "rotate", "reorder", "delete", "extract",
+                "annotate", "fill-form",
+                "add-text", "edit-text", "add-image", "edit-image",
+                "encrypt", "info"
             ),
             ToolCatalogue.search("  ").map { it.id }
         )
@@ -42,5 +44,36 @@ class ToolCatalogueTest {
         assertEquals(ids.size, ids.toSet().size)
         assertEquals("Merge", ToolCatalogue.byId("merge")?.title)
         assertEquals(null, ToolCatalogue.byId("missing"))
+    }
+
+    @Test
+    fun editGroupContainsTheFourObjectTools() {
+        assertEquals(
+            listOf("add-text", "edit-text", "add-image", "edit-image"),
+            ToolCatalogue.tools.filter { it.group == ToolGroup.EDIT }.map { it.id }
+        )
+        assertTrue(
+            ToolCatalogue.tools
+                .filter { it.group == ToolGroup.EDIT }
+                .all { it.requiresEditingEngine }
+        )
+    }
+
+    @Test
+    fun groupedCatalogueKeepsSectionOrderAndOmitsEmptyGroups() {
+        val grouped = ToolCatalogue.grouped()
+        assertEquals(
+            listOf(
+                ToolGroup.ORGANIZE,
+                ToolGroup.ANNOTATE,
+                ToolGroup.EDIT,
+                ToolGroup.SECURITY
+            ),
+            grouped.map { it.first }
+        )
+        assertTrue(grouped.all { it.second.isNotEmpty() })
+        assertTrue(ToolCatalogue.grouped(ToolCatalogue.search("rotate")).none {
+            it.first == ToolGroup.EDIT
+        })
     }
 }

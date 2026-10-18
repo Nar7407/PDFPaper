@@ -32,10 +32,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.pdfpaper.app.data.cachePdfAndRemember
+import com.pdfpaper.app.edit.EditingRuntime
 import com.pdfpaper.app.ui.UiTags
 import com.pdfpaper.app.ui.components.AppTopBar
+import com.pdfpaper.app.ui.theme.PDFPaperTheme
 import kotlinx.coroutines.launch
 
 /**
@@ -48,7 +51,12 @@ fun ToolDetailScreen(
     toolId: String,
     onBack: () -> Unit,
     onOpenOrganizer: (path: String, hint: String?) -> Unit,
-    onOpenViewer: (path: String, startInEdit: Boolean, startWithForms: Boolean) -> Unit,
+    onOpenViewer: (
+        path: String,
+        startInEdit: Boolean,
+        startWithForms: Boolean,
+        startEditTool: String?
+    ) -> Unit,
     onOpenInfo: (path: String) -> Unit
 ) {
     val tool = ToolCatalogue.byId(toolId)
@@ -59,8 +67,10 @@ fun ToolDetailScreen(
 
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val demoEngine = EditingRuntime.isDemo(context)
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
+    val editToolAvailable = !tool.requiresEditingEngine || demoEngine
 
     val picker = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument()
@@ -75,10 +85,14 @@ fun ToolDetailScreen(
                         val path = cached.file.absolutePath
                         when (tool.action) {
                             ToolAction.ORGANIZE -> onOpenOrganizer(path, tool.organizerHint)
-                            ToolAction.ANNOTATE -> onOpenViewer(path, true, false)
-                            ToolAction.FILL_FORM -> onOpenViewer(path, true, true)
+                            ToolAction.ANNOTATE -> onOpenViewer(path, true, false, null)
+                            ToolAction.FILL_FORM -> onOpenViewer(path, true, true, null)
                             ToolAction.INFO -> onOpenInfo(path)
-                            ToolAction.ENCRYPT_INFO -> onOpenViewer(path, false, false)
+                            ToolAction.ENCRYPT_INFO -> onOpenViewer(path, false, false, null)
+                            ToolAction.ADD_TEXT -> onOpenViewer(path, true, false, "text")
+                            ToolAction.EDIT_TEXT -> onOpenViewer(path, true, false, "select")
+                            ToolAction.ADD_IMAGE -> onOpenViewer(path, true, false, "image")
+                            ToolAction.EDIT_IMAGE -> onOpenViewer(path, true, false, "select")
                         }
                     }
                     .onFailure {
@@ -89,6 +103,25 @@ fun ToolDetailScreen(
         }
     }
 
+    ToolDetailContent(
+        tool = tool,
+        onBack = onBack,
+        busy = busy,
+        error = error,
+        editToolAvailable = editToolAvailable,
+        onPick = { picker.launch(arrayOf("application/pdf")) }
+    )
+}
+
+@Composable
+private fun ToolDetailContent(
+    tool: ToolDefinition,
+    onBack: () -> Unit,
+    busy: Boolean,
+    error: String?,
+    editToolAvailable: Boolean,
+    onPick: () -> Unit
+) {
     Surface(modifier = Modifier.fillMaxSize().testTag(UiTags.TOOL_DETAIL_SCREEN)) {
         Column(modifier = Modifier.fillMaxSize()) {
             AppTopBar(
@@ -149,12 +182,35 @@ fun ToolDetailScreen(
                         "Choose a PDF to see its page count, PDF version, encryption state, size and object count."
                     )
                     ToolAction.ENCRYPT_INFO -> EncryptInfo()
+                    ToolAction.ADD_TEXT -> GuidanceCard(
+                        "How it works",
+                        "Choose a PDF, tap Add text in the edit toolbar, then tap a page. Type the text and choose its font, size and colour. In this build FakeEngine simulates the edit."
+                    )
+                    ToolAction.EDIT_TEXT -> GuidanceCard(
+                        "How it works",
+                        "Choose a PDF, tap a text object to select it, then tap Edit text to change its content, font size and colour. Drag the box to move it and its corner handles to resize."
+                    )
+                    ToolAction.ADD_IMAGE -> GuidanceCard(
+                        "How it works",
+                        "Choose a PDF, tap Add image, pick a picture from the gallery, then tap the page to place it. Drag to move and use the corner handles to resize."
+                    )
+                    ToolAction.EDIT_IMAGE -> GuidanceCard(
+                        "How it works",
+                        "Choose a PDF and tap a picture to select it. Drag to move it, use the corner handles to resize, or replace and delete it from the selection bar."
+                    )
+                }
+                if (!editToolAvailable) {
+                    Spacer(Modifier.height(12.dp))
+                    GuidanceCard(
+                        "Coming soon",
+                        "This tool needs the PDF engine's content-editing API. It is shown here so the planned workflow is discoverable, but it is disabled in this build."
+                    )
                 }
 
                 Spacer(Modifier.height(20.dp))
                 Button(
-                    onClick = { picker.launch(arrayOf("application/pdf")) },
-                    enabled = !busy,
+                    onClick = onPick,
+                    enabled = !busy && editToolAvailable,
                     modifier = Modifier.fillMaxWidth().height(52.dp)
                 ) {
                     Text(
@@ -248,5 +304,20 @@ private fun ToolMissing(onBack: () -> Unit) {
                 Text("That tool is not in this catalogue.")
             }
         }
+    }
+}
+
+@Preview(showBackground = true, widthDp = 411, heightDp = 891)
+@Composable
+private fun ToolDetailScreenLightPreview() {
+    PDFPaperTheme(darkTheme = false) {
+        ToolDetailContent(
+            tool = ToolCatalogue.byId("add-text") ?: ToolCatalogue.tools.first(),
+            onBack = {},
+            busy = false,
+            error = null,
+            editToolAvailable = true,
+            onPick = {}
+        )
     }
 }
