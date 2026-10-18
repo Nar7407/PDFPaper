@@ -57,6 +57,6 @@ internal fun matrixOf(operands: List<PdfObject>): PdfMatrix? {
             else -> null
         }
     }
-    if (vals.any { it == null }) return null
+    if (vals.size < 6 || vals.any { it == null }) return null
     return PdfMatrix(vals[0]!!, vals[1]!!, vals[2]!!, vals[3]!!, vals[4]!!, vals[5]!!)
 }

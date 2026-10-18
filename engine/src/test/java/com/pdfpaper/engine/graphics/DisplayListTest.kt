@@ -110,6 +110,12 @@ class DisplayListTest {
         assertEquals(2, dl.commands.size) // n paints nothing
     }
 
+    @Test
+    fun tmWithFewerThanSixOperandsIsIgnored() {
+        val dl = display(page("BT 1 2 3 Tm ET"))
+        assertTrue(dl.commands.isEmpty())
+    }
+
     // ------------------------------------------------------------- clipping
 
     @Test

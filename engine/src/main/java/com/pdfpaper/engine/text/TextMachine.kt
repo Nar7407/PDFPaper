@@ -197,7 +197,7 @@ class TextMachine(
             }
             "Tm" -> {
                 val vals = ops.take(6).map { number(it) }
-                if (vals.all { it != null }) {
+                if (vals.size == 6 && vals.all { it != null }) {
                     lineMat = PdfMatrix(
                         vals[0]!!, vals[1]!!, vals[2]!!,
                         vals[3]!!, vals[4]!!, vals[5]!!

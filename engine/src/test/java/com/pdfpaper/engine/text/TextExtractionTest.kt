@@ -142,6 +142,34 @@ class TextExtractionTest {
         assertEquals("\u00C5-\u2013", joinedTexts(extract(objs)))
     }
 
+    // ------------------------------------------------- malformed matrices (P0-1)
+
+    @Test
+    fun tmWithFewerThanSixOperandsIsIgnored() {
+        val objs = onePagePdf(
+            content = "BT /F1 12 Tf 1 2 3 Tm (Hi) Tj ET",
+            fontRefEntries = "/F1 5 0 R",
+            extraObjects = listOf(
+                TestObj(5, 0, "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>")
+            )
+        )
+        val text = extract(objs)
+        assertEquals("Hi", joinedTexts(text))
+        assertTrue(text.warnings.any { it.contains("Tm") }, "warnings=${text.warnings}")
+    }
+
+    @Test
+    fun cmWithFewerThanSixOperandsIsIgnored() {
+        val objs = onePagePdf(
+            content = "BT /F1 12 Tf 1 2 3 cm (Hi) Tj ET",
+            fontRefEntries = "/F1 5 0 R",
+            extraObjects = listOf(
+                TestObj(5, 0, "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>")
+            )
+        )
+        assertEquals("Hi", joinedTexts(extract(objs)))
+    }
+
     private fun toUnicodeCMap(): String = listOf(
         "/CIDInit /ProcSet findresource begin",
         "12 dict begin",
