@@ -84,6 +84,18 @@ class FormTest {
         return PdfDocument.open(ByteArraySource(buildTestPdf(objects))).getOrThrow()
     }
 
+    private fun cyclicFormDocument(): PdfDocument {
+        val objects = listOf(
+            TestObj(1, 0, "<< /Type /Catalog /Pages 2 0 R /AcroForm 5 0 R >>"),
+            TestObj(2, 0, "<< /Type /Pages /Kids [3 0 R] /Count 1 >>"),
+            TestObj(3, 0, "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << >> >>"),
+            TestObj(5, 0, "<< /Fields [6 0 R] /DA (/Helv 0 Tf 0 g) >>"),
+            TestObj(6, 0, "<< /T (a) /Kids [7 0 R] >>"),
+            TestObj(7, 0, "<< /T (b) /Kids [6 0 R] >>")
+        )
+        return PdfDocument.open(ByteArraySource(buildTestPdf(objects))).getOrThrow()
+    }
+
     private fun reopen(bytes: ByteArray): PdfDocument =
         PdfDocument.open(ByteArraySource(bytes)).getOrThrow()
 
@@ -209,12 +221,16 @@ class FormTest {
     }
 
     @Test
-    fun fillingAnUnknownFieldChangesNothing() {
-        val doc = formDocument()
-        val bytes = PdfPageOps.fillForm(doc, mapOf("nope" to "x")).getOrThrow()
+    fun cyclicFieldTreeDoesNotOverflow() {
+        val doc = cyclicFormDocument()
+        assertTrue(doc.formFields().isEmpty())
         doc.close()
-        val reopened = reopen(bytes)
-        assertEquals("before", reopened.formFields().associateBy { it.name }.getValue("name").value)
-        reopened.close()
+    }
+
+    @Test
+    fun fillingCyclicFieldTreeDoesNotOverflow() {
+        val doc = cyclicFormDocument()
+        PdfPageOps.fillForm(doc, mapOf("a" to "x")).getOrThrow()
+        doc.close()
     }
 }

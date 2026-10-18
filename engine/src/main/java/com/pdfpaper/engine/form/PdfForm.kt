@@ -13,6 +13,8 @@ import com.pdfpaper.engine.model.PdfString
 import com.pdfpaper.engine.page.PdfPage
 import com.pdfpaper.engine.page.pages
 
+private const val MAX_FIELD_DEPTH = 64
+
 /** Interactive form field kind (§12.7.4.2 /FT and button /Ff flags). */
 enum class FieldKind { TEXT, CHECKBOX, RADIO, PUSH_BUTTON, CHOICE, SIGNATURE, UNKNOWN }
 
@@ -105,8 +107,18 @@ private class Inherited(
     val opt: PdfObject? = null
 )
 
-private fun collectField(ctx: Ctx, node: PdfObject, prefix: String, inherited: Inherited, out: MutableList<PdfField>) {
+private fun collectField(
+    ctx: Ctx,
+    node: PdfObject,
+    prefix: String,
+    inherited: Inherited,
+    out: MutableList<PdfField>,
+    seen: MutableSet<Int> = HashSet(),
+    depth: Int = 0
+) {
+    if (depth > MAX_FIELD_DEPTH) return
     val ref = node as? PdfRef
+    if (ref != null && !seen.add(ref.objNum)) return
     val dict = ctx.resolve(node) as? PdfDict ?: return
     val ownName = (dict["T"] as? PdfString)?.text().orEmpty()
     val name = qualify(prefix, ownName)
@@ -122,7 +134,7 @@ private fun collectField(ctx: Ctx, node: PdfObject, prefix: String, inherited: I
     }.orEmpty()
     if (fieldKids.isNotEmpty()) {
         val next = Inherited(ft, ff, value, opt)
-        for (kid in kids!!) if (kid in fieldKids) collectField(ctx, kid, name, next, out)
+        for (kid in kids!!) if (kid in fieldKids) collectField(ctx, kid, name, next, out, seen, depth + 1)
         return
     }
 

@@ -15,6 +15,8 @@ import com.pdfpaper.engine.write.PdfSerializer
 import java.io.ByteArrayOutputStream
 import java.nio.charset.StandardCharsets
 
+private const val MAX_FIELD_DEPTH = 64
+
 /**
  * Writes AcroForm field values and fresh appearance streams into a document
  * that a [PdfDocumentBuilder] already holds (ISO 32000-1, §12.7.4.3 widgets,
@@ -62,7 +64,17 @@ internal class FormFiller(private val builder: PdfDocumentBuilder) {
 
     private class Inherited(val ft: String? = null, val ff: Int? = null, val da: String? = null)
 
-    private fun fillField(node: PdfObject, prefix: String, inherited: Inherited, values: Map<String, String>) {
+    private fun fillField(
+        node: PdfObject,
+        prefix: String,
+        inherited: Inherited,
+        values: Map<String, String>,
+        seen: MutableSet<Int> = HashSet(),
+        depth: Int = 0
+    ) {
+        if (depth > MAX_FIELD_DEPTH) return
+        val ref = node as? PdfRef
+        if (ref != null && !seen.add(ref.objNum)) return
         val dict = resolve(node) as? PdfDict ?: return
         val ownName = (dict["T"] as? PdfString)?.text().orEmpty()
         val name = qualify(prefix, ownName)
@@ -77,7 +89,7 @@ internal class FormFiller(private val builder: PdfDocumentBuilder) {
         }.orEmpty()
         if (fieldKids.isNotEmpty()) {
             val next = Inherited(ft, ff, da)
-            for (kid in kids!!) if (kid in fieldKids) fillField(kid, name, next, values)
+            for (kid in kids!!) if (kid in fieldKids) fillField(kid, name, next, values, seen, depth + 1)
             return
         }
 
