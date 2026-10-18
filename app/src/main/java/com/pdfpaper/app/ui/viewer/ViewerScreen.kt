@@ -26,9 +26,13 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
@@ -97,6 +101,9 @@ private const val MAX_ZOOM = 6f
 @Composable
 fun ViewerScreen(
     path: String,
+    startInEditMode: Boolean = false,
+    startWithForms: Boolean = false,
+    onBack: () -> Unit = {},
     onOrganize: (String) -> Unit = {},
     viewModel: ViewerViewModel = viewModel()
 ) {
@@ -113,7 +120,7 @@ fun ViewerScreen(
     var zoom by rememberSaveable { mutableFloatStateOf(1f) }
     var showSearch by rememberSaveable { mutableStateOf(false) }
     var query by rememberSaveable { mutableStateOf("") }
-    var showForms by rememberSaveable { mutableStateOf(false) }
+    var showForms by rememberSaveable { mutableStateOf(startWithForms) }
     var noteTarget by remember { mutableStateOf<Triple<Int, Float, Float>?>(null) }
 
     val density = LocalDensity.current
@@ -136,6 +143,12 @@ fun ViewerScreen(
     }
 
     LaunchedEffect(path) { viewModel.load(path) }
+    LaunchedEffect(path, startInEditMode, startWithForms, state.isLoading, state.pageCount) {
+        if (startInEditMode && !state.isLoading && state.error == null && state.pageCount > 0) {
+            viewModel.setEditMode(true)
+            if (startWithForms) showForms = true
+        }
+    }
     LaunchedEffect(message) {
         val text = message ?: return@LaunchedEffect
         snackbar.showSnackbar(text)
@@ -170,6 +183,7 @@ fun ViewerScreen(
                 zoom = zoom,
                 findActive = showSearch,
                 editActive = edit.active,
+                onBack = onBack,
                 onZoomIn = { zoom = (zoom * 1.25f).coerceAtMost(MAX_ZOOM) },
                 onZoomOut = { zoom = (zoom / 1.25f).coerceAtLeast(MIN_ZOOM) },
                 onFit = { zoom = 1f },
@@ -315,6 +329,7 @@ private fun ViewerToolbar(
     zoom: Float,
     findActive: Boolean,
     editActive: Boolean,
+    onBack: () -> Unit,
     onZoomIn: () -> Unit,
     onZoomOut: () -> Unit,
     onFit: () -> Unit,
@@ -323,23 +338,38 @@ private fun ViewerToolbar(
     onOrganize: () -> Unit
 ) {
     Surface(tonalElevation = 3.dp, modifier = Modifier.fillMaxWidth()) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(title, style = MaterialTheme.typography.titleMedium, maxLines = 1)
-                if (pageLabel != null) {
-                    Text(pageLabel, style = MaterialTheme.typography.labelSmall)
+        Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 8.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(onClick = onBack) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                        contentDescription = "Back"
+                    )
                 }
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(title, style = MaterialTheme.typography.titleMedium, maxLines = 1)
+                    if (pageLabel != null) {
+                        Text(pageLabel, style = MaterialTheme.typography.labelSmall)
+                    }
+                }
+                Text("${(zoom * 100).roundToInt()}%", style = MaterialTheme.typography.labelLarge)
+                TextButton(onClick = onFit) { Text("Fit") }
             }
-            Text("${(zoom * 100).roundToInt()}%", style = MaterialTheme.typography.labelLarge)
-            TextButton(onClick = onZoomOut) { Text("−") }
-            TextButton(onClick = onZoomIn) { Text("+") }
-            TextButton(onClick = onFit) { Text("Fit") }
-            TextButton(onClick = onFind) { Text(if (findActive) "Close" else "Find") }
-            TextButton(onClick = onEdit) { Text(if (editActive) "Done" else "Annotate") }
-            TextButton(onClick = onOrganize) { Text("Organize") }
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                TextButton(onClick = onZoomOut) { Text("−") }
+                TextButton(onClick = onZoomIn) { Text("+") }
+                TextButton(onClick = onFind) { Text(if (findActive) "Close" else "Find") }
+                TextButton(onClick = onEdit) { Text(if (editActive) "Done" else "Annotate") }
+                TextButton(onClick = onOrganize) { Text("Organize") }
+            }
         }
     }
 }
@@ -360,7 +390,10 @@ private fun EditBar(
 ) {
     Surface(tonalElevation = 2.dp, modifier = Modifier.fillMaxWidth()) {
         Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState())
+                .padding(horizontal = 12.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(4.dp)
         ) {

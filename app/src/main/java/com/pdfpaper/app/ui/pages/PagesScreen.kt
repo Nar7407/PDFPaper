@@ -23,7 +23,11 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SnackbarHost
@@ -67,6 +71,8 @@ import kotlinx.coroutines.withContext
 @Composable
 fun PagesScreen(
     path: String,
+    hint: String? = null,
+    onBack: () -> Unit = {},
     viewModel: PagesViewModel = viewModel()
 ) {
     val state by viewModel.state.collectAsState()
@@ -79,6 +85,9 @@ fun PagesScreen(
     val scope = rememberCoroutineScope()
 
     LaunchedEffect(path) { viewModel.load(path) }
+    LaunchedEffect(hint) {
+        if (!hint.isNullOrBlank()) snackbar.showSnackbar(hint)
+    }
     LaunchedEffect(state.message) {
         val text = state.message ?: return@LaunchedEffect
         snackbar.showSnackbar(text)
@@ -121,6 +130,7 @@ fun PagesScreen(
                 selectedCount = state.selection.size,
                 canUndo = state.canUndo,
                 canRedo = state.canRedo,
+                onBack = onBack,
                 onUndo = viewModel::undo,
                 onRedo = viewModel::redo,
                 onSelectAll = viewModel::selectAll,
@@ -193,6 +203,7 @@ private fun OrganizerToolbar(
     selectedCount: Int,
     canUndo: Boolean,
     canRedo: Boolean,
+    onBack: () -> Unit,
     onUndo: () -> Unit,
     onRedo: () -> Unit,
     onSelectAll: () -> Unit,
@@ -200,8 +211,14 @@ private fun OrganizerToolbar(
     onReset: () -> Unit
 ) {
     Surface(tonalElevation = 3.dp, modifier = Modifier.fillMaxWidth()) {
-        Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp)) {
+        Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onClick = onBack) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                        contentDescription = "Back"
+                    )
+                }
                 Column(modifier = Modifier.weight(1f)) {
                     Text(title, style = MaterialTheme.typography.titleMedium, maxLines = 1)
                     Text(
