@@ -168,6 +168,16 @@ class ContentParserTest {
     }
 
     @Test
+    fun deeplyNestedInlineImageArrayDoesNotOverflow() {
+        val depth = 20_000
+        val parsed = parse(
+            "BI /W 1 /H 1 /D " + "[".repeat(depth) + "0" + "]".repeat(depth) + " ID \u0000 EI"
+        )
+        assertTrue(parsed.warnings.any { it.contains("nested too deeply") })
+        assertTrue(parsed.commands.any { it.operator == "ID" })
+    }
+
+    @Test
     fun inlineImageWithoutEiConsumesRestWithWarning() {
         val parsed = parse("BI /W 1 ID \u0000\u0001\u0002")
         assertArrayEquals(byteArrayOf(0, 1, 2), imageOf(parsed).data)

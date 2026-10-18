@@ -27,6 +27,7 @@ class ContentCommand(val operands: List<PdfObject>, val operator: String) {
 // Bounds that keep broken streams from consuming unbounded memory.
 internal const val MAX_OPERANDS = 4096
 internal const val MAX_COMMANDS = 1_000_000
+private const val MAX_INLINE_ARRAY_DEPTH = 64
 
 /**
  * Parses content-stream bytes (§7.8.2-3) into [ContentCommand]s. The BI/ID/EI
@@ -202,7 +203,12 @@ private fun readInlineImage(scanner: ContentScanner): PdfInlineImage? {
     return PdfInlineImage(PdfDict(entries), imageData)
 }
 
-private fun readInlineArray(scanner: ContentScanner): PdfArray? {
+private fun readInlineArray(scanner: ContentScanner, depth: Int = 0): PdfArray? {
+    if (depth > MAX_INLINE_ARRAY_DEPTH) {
+        scanner.warnings += "inline image array nested too deeply, ignored"
+        skipNested(scanner)
+        return PdfArray(emptyList())
+    }
     val items = ArrayList<PdfObject>()
     while (true) {
         val token = scanner.next() ?: run {
@@ -216,7 +222,7 @@ private fun readInlineArray(scanner: ContentScanner): PdfArray? {
             is CToken.CName -> items += PdfName(token.name)
             is CToken.CString -> items += PdfString(token.bytes)
             is CToken.CArrayStart -> {
-                val nested = readInlineArray(scanner)
+                val nested = readInlineArray(scanner, depth + 1)
                 if (nested == null) return null
                 items += nested
             }
