@@ -9,6 +9,8 @@ import com.pdfpaper.engine.model.PdfObject
 import com.pdfpaper.engine.model.PdfRef
 import com.pdfpaper.engine.model.PdfStream
 
+private const val MAX_COPY_DEPTH = 1024
+
 /**
  * Copies an object graph from a source [PdfDocument] into a [target] builder,
  * giving every referenced indirect object a fresh number (§7.3.10 references).
@@ -56,7 +58,8 @@ class PdfObjectCopier(
      * dropped object, is a dangling reference, or cannot be resolved.
      * [skipKeys] is applied to the copied body's dictionary (see [copyValue]).
      */
-    fun copyIndirect(objNum: Int, skipKeys: Set<String> = emptySet()): PdfRef? {
+    fun copyIndirect(objNum: Int, skipKeys: Set<String> = emptySet(), depth: Int = 0): PdfRef? {
+        if (depth > MAX_COPY_DEPTH) return null
         if (known.containsKey(objNum)) return known[objNum]
         memo[objNum]?.let { return it }
         val raw = source.deref(objNum) ?: return null
@@ -64,7 +67,7 @@ class PdfObjectCopier(
         val num = target.allocate()
         val ref = PdfRef(num, 0)
         memo[objNum] = ref
-        target.put(num, copyValue(obj, skipKeys) ?: PdfNull)
+        target.put(num, copyValue(obj, skipKeys, depth) ?: PdfNull)
         return ref
     }
 
@@ -92,20 +95,24 @@ class PdfObjectCopier(
      * pointers) that are rebuilt by the caller. [skipKeys] applies only to the
      * dictionary it is passed with, not to nested dictionaries.
      */
-    fun copyValue(obj: PdfObject, skipKeys: Set<String> = emptySet()): PdfObject? = when (obj) {
-        is PdfRef -> copyIndirect(obj.objNum)
-        is PdfArray -> PdfArray(obj.items.mapNotNull { copyValue(it) })
-        is PdfDict -> copyDict(obj, skipKeys)
-        is PdfStream -> PdfStream(copyDict(obj.dict) ?: PdfDict(emptyMap()), obj.data)
-        else -> obj
+    fun copyValue(obj: PdfObject, skipKeys: Set<String> = emptySet(), depth: Int = 0): PdfObject? {
+        if (depth > MAX_COPY_DEPTH) return null
+        return when (obj) {
+            is PdfRef -> copyIndirect(obj.objNum, depth = depth + 1)
+            is PdfArray -> PdfArray(obj.items.mapNotNull { copyValue(it, depth = depth + 1) })
+            is PdfDict -> copyDict(obj, skipKeys, depth + 1)
+            is PdfStream -> PdfStream(copyDict(obj.dict, depth = depth + 1) ?: PdfDict(emptyMap()), obj.data)
+            else -> obj
+        }
     }
 
     /** Copies a dictionary, dropping [skipKeys] and any value that cannot be copied. */
-    fun copyDict(dict: PdfDict, skipKeys: Set<String> = emptySet()): PdfDict? {
+    fun copyDict(dict: PdfDict, skipKeys: Set<String> = emptySet(), depth: Int = 0): PdfDict? {
+        if (depth > MAX_COPY_DEPTH) return null
         val out = LinkedHashMap<PdfName, PdfObject>()
         for ((key, value) in dict.entries) {
             if (key.name in skipKeys) continue
-            val copied = copyValue(value) ?: continue
+            val copied = copyValue(value, depth = depth + 1) ?: continue
             out[key] = copied
         }
         return PdfDict(out)

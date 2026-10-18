@@ -89,6 +89,34 @@ class PdfPageOpsTest {
         }
     }
 
+    @Test
+    fun longIndirectChainDoesNotOverflow() {
+        val depth = 500
+        val nest = 240
+        val objects = ArrayList<TestObj>()
+        objects += TestObj(1, 0, "<< /Type /Catalog /Pages 2 0 R >>")
+        objects += TestObj(2, 0, "<< /Type /Pages /Kids [3 0 R] /Count 1 >>")
+        objects += TestObj(
+            3, 0,
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] " +
+                "/Resources << >> /Contents 4 0 R /Chain 5 0 R >>"
+        )
+        objects += TestObj(4, 0, "<< /Length 0 >>\nstream\n\nendstream")
+        for (i in 0 until depth) {
+            val next = if (i == depth - 1) "" else "${6 + i} 0 R"
+            val body = "[".repeat(nest) + " $next " + "]".repeat(nest)
+            objects += TestObj(5 + i, 0, body)
+        }
+        WriteFixtures.open(buildTestPdf(objects, rootRef = "1 0 R")).use { doc ->
+            for (n in 5 until 5 + depth) assertNotNull(doc.deref(n))
+            val bytes = PdfPageOps.extract(doc, listOf(0)).getOrThrow()
+            WriteFixtures.open(bytes).use { out ->
+                assertEquals(1, out.pages().size)
+                assertNotNull(out.pages()[0].dict["Chain"])
+            }
+        }
+    }
+
     // -- Basic operations -----------------------------------------------------
 
     @Test
