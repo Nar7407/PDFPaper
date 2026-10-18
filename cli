@@ -4,6 +4,7 @@ set -eu
 usage() {
     echo "Usage: cli fontinfo <file.pdf> --page <n>" >&2
     echo "       cli add-text|add-image|list-images|move-image|replace-image|delete-image ..." >&2
+    echo "       cli convert pdf-to-pptx <in.pdf> --out <out.pptx> [--fidelity]" >&2
     exit 2
 }
 
@@ -22,6 +23,9 @@ case "$1" in
         ;;
     add-text|add-image|list-images|move-image|replace-image|delete-image)
         exec "$root/gradlew" -q :engine:pdfedit --args="$*"
+        ;;
+    convert)
+        exec "$root/gradlew" -q :convert:convert --args="$*"
         ;;
     *)
         usage
