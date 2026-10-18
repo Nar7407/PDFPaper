@@ -16,6 +16,8 @@ import com.pdfpaper.engine.page.PdfPage
 import com.pdfpaper.engine.page.pages
 import java.nio.charset.StandardCharsets
 
+private const val MAX_OUTLINE_DEPTH = 64
+
 /**
  * One page requested for the output, in output order (ISO 32000-1, §7.7.3).
  * [rotationDelta] is extra clockwise rotation added on top of the page's own
@@ -348,12 +350,22 @@ internal class PdfDocumentAssembler(
 
     private data class Level(val first: PdfRef?, val last: PdfRef?, val count: Int)
 
-    private fun importOutlineLevel(copier: PdfObjectCopier, firstObj: PdfObject, parentRef: PdfRef): Level {
+    private fun importOutlineLevel(
+        copier: PdfObjectCopier,
+        firstObj: PdfObject,
+        parentRef: PdfRef,
+        seen: MutableSet<Int> = HashSet(),
+        depth: Int = 0
+    ): Level {
+        if (depth > MAX_OUTLINE_DEPTH) return Level(null, null, 0)
         val sources = ArrayList<PdfDict>()
-        var node = copier.resolve(firstObj) as? PdfDict
-        while (node != null) {
+        var nextObj: PdfObject? = firstObj
+        while (nextObj != null) {
+            val objNum = (nextObj as? PdfRef)?.objNum
+            if (objNum != null && !seen.add(objNum)) break
+            val node = copier.resolve(nextObj) as? PdfDict ?: break
             sources += node
-            node = node["Next"]?.let { copier.resolve(it) } as? PdfDict
+            nextObj = node["Next"]
         }
         // An item is kept when it has a reachable destination or keeps children.
         val keptSources = sources.filter { keepOutlineItem(copier, it) }
@@ -378,7 +390,7 @@ internal class PdfDocumentAssembler(
                 if (copied != null && actionValid(copied)) entries[PdfName("A")] = copied
             }
             src["First"]?.let { childFirst ->
-                val child = importOutlineLevel(copier, childFirst, ref)
+                val child = importOutlineLevel(copier, childFirst, ref, seen, depth + 1)
                 if (child.first != null) {
                     entries[PdfName("First")] = child.first
                     entries[PdfName("Last")] = child.last!!

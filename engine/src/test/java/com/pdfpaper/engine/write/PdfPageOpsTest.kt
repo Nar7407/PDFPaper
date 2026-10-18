@@ -8,6 +8,8 @@ import com.pdfpaper.engine.model.PdfObject
 import com.pdfpaper.engine.model.PdfRef
 import com.pdfpaper.engine.model.PdfString
 import com.pdfpaper.engine.page.pages
+import com.pdfpaper.engine.test.TestObj
+import com.pdfpaper.engine.test.buildTestPdf
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -43,6 +45,48 @@ class PdfPageOpsTest {
             if ((annot["Subtype"] as? PdfName)?.name == "Link") return annot["Dest"]
         }
         return null
+    }
+
+    /** One page with an outline item that points back at itself (P0-3). */
+    private fun cyclicOutlineDoc(nextCycle: Boolean): PdfDocument {
+        val item = if (nextCycle) {
+            "<< /Title (Loop) /Parent 5 0 R /Next 6 0 R >>"
+        } else {
+            "<< /Title (Loop) /Parent 5 0 R /First 6 0 R >>"
+        }
+        return WriteFixtures.open(
+            buildTestPdf(
+                listOf(
+                    TestObj(1, 0, "<< /Type /Catalog /Pages 2 0 R /Outlines 5 0 R >>"),
+                    TestObj(2, 0, "<< /Type /Pages /Kids [3 0 R] /Count 1 >>"),
+                    TestObj(
+                        3, 0,
+                        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] " +
+                            "/Resources << >> /Contents 4 0 R >>"
+                    ),
+                    TestObj(4, 0, "<< /Length 0 >>\nstream\n\nendstream"),
+                    TestObj(5, 0, "<< /Type /Outlines /First 6 0 R /Last 6 0 R /Count 1 >>"),
+                    TestObj(6, 0, item)
+                ),
+                rootRef = "1 0 R"
+            )
+        )
+    }
+
+    @Test
+    fun cyclicOutlineFirstDoesNotOverflow() {
+        cyclicOutlineDoc(nextCycle = false).use { doc ->
+            val bytes = PdfPageOps.extract(doc, listOf(0)).getOrThrow()
+            WriteFixtures.open(bytes).use { out -> assertEquals(1, out.pages().size) }
+        }
+    }
+
+    @Test
+    fun cyclicOutlineNextDoesNotLoop() {
+        cyclicOutlineDoc(nextCycle = true).use { doc ->
+            val bytes = PdfPageOps.extract(doc, listOf(0)).getOrThrow()
+            WriteFixtures.open(bytes).use { out -> assertEquals(1, out.pages().size) }
+        }
     }
 
     // -- Basic operations -----------------------------------------------------
