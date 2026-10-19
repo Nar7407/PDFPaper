@@ -28,4 +28,5 @@ exit /b %ERRORLEVEL%
 echo Usage: cli fontinfo ^<file.pdf^> --page ^<n^> 1>&2
 echo        cli add-text^|add-image^|list-images^|move-image^|replace-image^|delete-image ... 1>&2
 echo        cli convert pdf-to-pptx ^<in.pdf^> --out ^<out.pptx^> [--fidelity] 1>&2
+echo        cli convert pdf-to-docx ^<in.pdf^> --out ^<out.docx^> [--mode flow^|exact] 1>&2
 exit /b 2

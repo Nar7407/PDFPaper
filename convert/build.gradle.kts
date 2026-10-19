@@ -29,7 +29,7 @@ tasks.withType<Test> {
 // resolved from the repo root, not convert/.
 tasks.register<JavaExec>("convert") {
     group = "verification"
-    description = "Convert between PDF and office formats (pdf-to-pptx, ...)."
+    description = "Convert between PDF and office formats (pdf-to-pptx, pdf-to-docx)."
     classpath = sourceSets["main"].runtimeClasspath
     mainClass.set("com.pdfpaper.convert.tools.ConvertCliKt")
     workingDir = rootProject.projectDir
@@ -51,4 +51,22 @@ tasks.register<JavaExec>("pptxCorpusCheck") {
     )
     inputs.dir(rootProject.file("testdata"))
     outputs.file(pptxCorpusReport)
+}
+
+val docxCorpusReport = layout.buildDirectory.file("docx-corpus-report.txt")
+
+// Acceptance harness: converts every /testdata PDF to .docx (flow and exact)
+// and validates the packages, writing convert/build/docx-corpus-report.txt.
+tasks.register<JavaExec>("docxCorpusCheck") {
+    group = "verification"
+    description = "Converts every corpus PDF to DOCX in both modes and validates the packages."
+    classpath = sourceSets["main"].runtimeClasspath
+    mainClass.set("com.pdfpaper.convert.tools.DocxCorpusCheckKt")
+    args(
+        rootProject.file("testdata").absolutePath,
+        layout.buildDirectory.dir("docx-corpus").get().asFile.absolutePath,
+        docxCorpusReport.get().asFile.absolutePath
+    )
+    inputs.dir(rootProject.file("testdata"))
+    outputs.file(docxCorpusReport)
 }

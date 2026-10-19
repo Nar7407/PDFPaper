@@ -8,6 +8,7 @@ import com.pdfpaper.convert.pptx.PptxWriter
 import com.pdfpaper.convert.pptx.Slide
 import com.pdfpaper.convert.pptx.SlideShape
 import com.pdfpaper.convert.pptx.TextBoxShape
+import com.pdfpaper.convert.media.ImageBag
 import com.pdfpaper.convert.raster.PngWriter
 import com.pdfpaper.convert.raster.SoftwareRenderer
 import com.pdfpaper.engine.content.parseContent
@@ -18,7 +19,6 @@ import com.pdfpaper.engine.graphics.FillPath
 import com.pdfpaper.engine.graphics.FillStrokePath
 import com.pdfpaper.engine.graphics.StrokePath
 import com.pdfpaper.engine.graphics.buildDisplayList
-import com.pdfpaper.engine.image.RasterImage
 import com.pdfpaper.engine.io.FileSource
 import com.pdfpaper.engine.model.PdfDocument
 import com.pdfpaper.engine.model.PdfName
@@ -28,7 +28,6 @@ import com.pdfpaper.engine.render.PageGeometry
 import com.pdfpaper.engine.render.renderDisplayList
 import com.pdfpaper.engine.text.PdfTextRun
 import java.io.File
-import java.util.LinkedHashMap
 import kotlin.math.abs
 import kotlin.math.atan2
 import kotlin.math.hypot
@@ -80,7 +79,7 @@ object PdfToPptx {
         val limit = min(pages.size, maxOf(0, options.maxPages))
         val slides = ArrayList<Slide>(limit)
         val reportPages = ArrayList<PageLosses>(limit)
-        val media = MediaBag()
+        val media = ImageBag("ppt/media/image")
 
         var slideWidth = Emu.ofPoints(PageGeometry.DEFAULT_WIDTH)
         var slideHeight = Emu.ofPoints(PageGeometry.DEFAULT_HEIGHT)
@@ -138,12 +137,12 @@ object PdfToPptx {
                         if (options.fidelity) {
                             // Images are part of the background picture; only
                             // report the ones the rasterizer could not draw.
-                            if (command.image.pixels == null) skippedImages += describeSkip(command.image)
+                            if (command.image.pixels == null) skippedImages += ImageBag.describe(command.image)
                             continue
                         }
                         val part = media.partFor(command.image)
                         if (part == null) {
-                            skippedImages += describeSkip(command.image)
+                            skippedImages += ImageBag.describe(command.image)
                             continue
                         }
                         val placement = placementOf(emuMatrix * command.matrix)
@@ -152,7 +151,9 @@ object PdfToPptx {
                             continue
                         }
                         shapes += PictureShape(
-                            nextId++, placement.x, placement.y, placement.width, placement.height,
+                            nextId++,
+                            placement.x.roundToLong(), placement.y.roundToLong(),
+                            placement.width.roundToLong(), placement.height.roundToLong(),
                             placement.flipH, placement.flipV, part
                         )
                         pictures++
@@ -252,45 +253,6 @@ object PdfToPptx {
 
     // ------------------------------------------------------------- helpers
 
-    private class Placement(
-        val x: Long, val y: Long, val width: Long, val height: Long,
-        val flipH: Boolean, val flipV: Boolean
-    )
-
-    /**
-     * Image unit square → slide rectangle. The square is read exactly as the
-     * display list defines it (§8.9.5.2): sample column 0 sits at unit x=0 and
-     * the first sample row at unit y=0, which is the rule the renderers apply
-     * (`drawBitmap(bitmap, null, UNIT_RECT)`), so a picture is flipped only
-     * when the matrix itself flipped the square. Returns null when the
-     * placement is rotated or skewed, which DrawingML cannot express without a
-     * transform we do not compute.
-     */
-    private fun placementOf(matrix: PdfMatrix): Placement? {
-        val p00 = matrix.apply(0.0, 0.0)
-        val p10 = matrix.apply(1.0, 0.0)
-        val p01 = matrix.apply(0.0, 1.0)
-        val p11 = matrix.apply(1.0, 1.0)
-        val width = hypot(p10[0] - p00[0], p10[1] - p00[1])
-        val height = hypot(p01[0] - p00[0], p01[1] - p00[1])
-        if (width < 1e-6 || height < 1e-6) return null
-        if (abs(p10[1] - p00[1]) > 0.001 * width || abs(p01[0] - p00[0]) > 0.001 * height) return null
-        val xs = doubleArrayOf(p00[0], p10[0], p01[0], p11[0])
-        val ys = doubleArrayOf(p00[1], p10[1], p01[1], p11[1])
-        val minX = xs.min()
-        val maxX = xs.max()
-        val minY = ys.min()
-        val maxY = ys.max()
-        return Placement(
-            x = minX.roundToLong(),
-            y = minY.roundToLong(),
-            width = (maxX - minX).roundToLong(),
-            height = (maxY - minY).roundToLong(),
-            flipH = p00[0] > p10[0],
-            flipV = p00[1] > p01[1]
-        )
-    }
-
     private class EmuBox(val x: Long, val y: Long, val width: Long, val height: Long)
 
     /** Axis-aligned slide-space bounds of a run's page-space bbox. */
@@ -348,15 +310,6 @@ object PdfToPptx {
         return (degrees * 60000.0).roundToInt()
     }
 
-    private fun describeSkip(image: RasterImage): String {
-        val format = image.externalFormat ?: "unknown"
-        return when {
-            image.requiresExternalDecoder -> "$format image needs a platform decoder"
-            image.externalData == null && image.pixels == null -> "image has no decodable data"
-            else -> "$format image could not be embedded"
-        }
-    }
-
     /** Shading (`sh`) and pattern colours the content stream asks for. */
     private fun scanShadings(page: PdfPage): Pair<Int, Int> {
         val contents = page.contents().getOrNull() ?: return 0 to 0
@@ -370,64 +323,5 @@ object PdfToPptx {
             }
         }
         return shadings to patterns
-    }
-
-    /**
-     * Package parts for decoded images, shared across pages. The same
-     * [RasterImage] instance (a repeated form XObject, say) is written once.
-     */
-    private class MediaBag {
-        val parts = LinkedHashMap<String, ByteArray>()
-        private val byIdentity = HashMap<Int, String>()
-        private var counter = 0
-
-        fun nextNumber(): Int = ++counter
-
-        fun add(partName: String, bytes: ByteArray) {
-            parts[partName] = bytes
-        }
-
-        fun partFor(image: RasterImage): String? {
-            val key = System.identityHashCode(image)
-            byIdentity[key]?.let { return it }
-            val pixels = image.pixels
-            val jpeg = image.externalData
-            val extension: String
-            val bytes: ByteArray
-            if (image.externalFormat == "DCT" && jpeg != null && !image.stencil) {
-                extension = "jpg"
-                bytes = jpeg
-            } else if (pixels != null && pixels.size >= image.width * image.height * 4) {
-                extension = "png"
-                bytes = PngWriter.encodeRgba(image.width, image.height, rgbaWithMask(image, pixels))
-            } else {
-                return null
-            }
-            val name = "ppt/media/image${++counter}.$extension"
-            parts[name] = bytes
-            byIdentity[key] = name
-            return name
-        }
-
-        private fun rgbaWithMask(image: RasterImage, pixels: ByteArray): ByteArray {
-            val mask = image.softMask ?: return pixels
-            val maskPixels = mask.pixels ?: return pixels
-            val mw = mask.width
-            val mh = mask.height
-            if (mw <= 0 || mh <= 0 || maskPixels.size < mw * mh * 4) return pixels
-            val out = pixels.copyOf()
-            for (y in 0 until image.height) {
-                val my = (y.toDouble() / image.height * mh).toInt().coerceIn(0, mh - 1)
-                for (x in 0 until image.width) {
-                    val mx = (x.toDouble() / image.width * mw).toInt().coerceIn(0, mw - 1)
-                    val mo = (my * mw + mx) * 4
-                    val value = if (mask.stencil) maskPixels[mo + 3].toInt() and 0xFF
-                    else maskPixels[mo].toInt() and 0xFF
-                    val o = (y * image.width + x) * 4
-                    out[o + 3] = ((out[o + 3].toInt() and 0xFF) * value / 255).toByte()
-                }
-            }
-            return out
-        }
     }
 }
