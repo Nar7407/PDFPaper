@@ -13,4 +13,4 @@ dependencyResolutionManagement {
     }
 }
 rootProject.name = "PDFPaper"
-include(":app", ":engine", ":convert")
+include(":app", ":engine", ":convert", ":signatures")

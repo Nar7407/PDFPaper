@@ -13,6 +13,7 @@ usage() {
     echo "       cli text-to-pdf <in.txt> --out <out.pdf>" >&2
     echo "       cli comments list|add|reply|set-status ..." >&2
     echo "       cli stamp list|add ..." >&2
+    echo "       cli signatures verify <file.pdf> [--truststore <pem-or-keystore>] [--password <pw>]" >&2
     exit 2
 }
 
@@ -43,6 +44,9 @@ case "$1" in
         ;;
     stamp)
         exec "$root/gradlew" -q :engine:stamp --args="$*"
+        ;;
+    signatures)
+        exec "$root/gradlew" -q :signatures:verify --args="$*"
         ;;
     *)
         usage
