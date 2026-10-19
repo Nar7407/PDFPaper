@@ -29,7 +29,7 @@ tasks.withType<Test> {
 // resolved from the repo root, not convert/.
 tasks.register<JavaExec>("convert") {
     group = "verification"
-    description = "Convert between PDF and office formats (pdf-to-pptx, pdf-to-docx)."
+    description = "Convert between PDF and office formats (pdf-to-pptx, pdf-to-docx, docx-to-pdf, pptx-to-pdf)."
     classpath = sourceSets["main"].runtimeClasspath
     mainClass.set("com.pdfpaper.convert.tools.ConvertCliKt")
     workingDir = rootProject.projectDir
@@ -88,4 +88,23 @@ tasks.register<JavaExec>("docxToPdfCorpusCheck") {
     )
     dependsOn("docxCorpusCheck")
     outputs.file(docxToPdfCorpusReport)
+}
+
+val pptxToPdfCorpusReport = layout.buildDirectory.file("pptx-pdf-corpus-report.txt")
+
+// Acceptance harness: converts every PPTX the T17 corpus check produced back to
+// PDF and reads each result with the engine, writing
+// convert/build/pptx-pdf-corpus-report.txt.
+tasks.register<JavaExec>("pptxToPdfCorpusCheck") {
+    group = "verification"
+    description = "Converts every corpus PPTX to PDF and reads the PDFs back."
+    classpath = sourceSets["main"].runtimeClasspath
+    mainClass.set("com.pdfpaper.convert.tools.PptxToPdfCorpusCheckKt")
+    args(
+        layout.buildDirectory.dir("pptx-corpus").get().asFile.absolutePath,
+        layout.buildDirectory.dir("pptx-pdf-corpus").get().asFile.absolutePath,
+        pptxToPdfCorpusReport.get().asFile.absolutePath
+    )
+    dependsOn("pptxCorpusCheck")
+    outputs.file(pptxToPdfCorpusReport)
 }

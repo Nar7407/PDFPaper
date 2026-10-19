@@ -1,55 +1,16 @@
 package com.pdfpaper.convert.word
 
+import com.pdfpaper.convert.NoteBag
+import com.pdfpaper.convert.pdf.ImageOp
+import com.pdfpaper.convert.pdf.LayoutPage
+import com.pdfpaper.convert.pdf.PdfOp
+import com.pdfpaper.convert.pdf.RuleOp
 import com.pdfpaper.convert.pdf.StandardFont
 import com.pdfpaper.convert.pdf.StandardFonts
+import com.pdfpaper.convert.pdf.TextOp
 import com.pdfpaper.convert.pdf.WinAnsi
+import com.pdfpaper.convert.pdf.shifted
 import kotlin.math.max
-
-/**
- * One drawable item of a laid-out page. Coordinates are in points and measured
- * from the page's **top-left**, y growing downwards; the PDF writer flips them.
- */
-internal sealed interface PdfOp
-
-internal class TextOp(
-    val x: Double,
-    /** Baseline, from the top of the page. */
-    val baseline: Double,
-    val text: String,
-    val font: StandardFont,
-    val size: Double,
-    val color: WordColor,
-    val underline: Boolean = false,
-    val strike: Boolean = false,
-    /** Extra advance after every character (`w:rPr/w:spacing`), in points. */
-    val tracking: Double = 0.0,
-    /** Extra advance after every space, for justified lines, in points. */
-    val wordSpacing: Double = 0.0
-) : PdfOp
-
-internal class RuleOp(
-    val x: Double,
-    val y: Double,
-    val width: Double,
-    val height: Double,
-    val color: WordColor
-) : PdfOp
-
-internal class ImageOp(
-    val x: Double,
-    val y: Double,
-    val width: Double,
-    val height: Double,
-    val image: WordImage
-) : PdfOp
-
-internal fun PdfOp.shifted(dx: Double, dy: Double): PdfOp = when (this) {
-    is TextOp -> TextOp(x + dx, baseline + dy, text, font, size, color, underline, strike, tracking, wordSpacing)
-    is RuleOp -> RuleOp(x + dx, y + dy, width, height, color)
-    is ImageOp -> ImageOp(x + dx, y + dy, width, height, image)
-}
-
-internal class LayoutPage(val width: Double, val height: Double, val ops: List<PdfOp>)
 
 internal class LayoutCounts {
     var pages = 0
@@ -546,7 +507,7 @@ internal class WordLayout(private val document: WordDocument) {
                 }
                 is ImagePiece -> {
                     val image = piece.run
-                    sink.emit(ImageOp(x, baseline - image.height, image.width, image.height, image.image))
+                    sink.emit(ImageOp(x, baseline - image.height, image.width, image.height, image.image.pdf))
                     x += image.width
                 }
             }
@@ -615,7 +576,7 @@ internal class WordLayout(private val document: WordDocument) {
             "bottom" -> toY - run.height
             else -> fromY
         }
-        val op = ImageOp(x, y, run.width, run.height, run.image)
+        val op = ImageOp(x, y, run.width, run.height, run.image.pdf)
         if (anchor.behindText) sectionSink.page.behind += op else sectionSink.page.front += op
         counts.images++
     }

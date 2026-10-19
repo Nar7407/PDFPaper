@@ -1,5 +1,7 @@
 package com.pdfpaper.convert.word
 
+import com.pdfpaper.convert.pdf.PdfColor
+import com.pdfpaper.convert.pdf.PdfImage
 import com.pdfpaper.convert.raster.PngImage
 
 /**
@@ -19,26 +21,8 @@ const val EMU_PER_POINT = 12700.0
 /** One point in twentieths of a point (`w:ind`, `w:spacing`). */
 const val TWIPS_PER_PT = 20.0
 
-internal class WordColor(val red: Int, val green: Int, val blue: Int) {
-    override fun equals(other: Any?): Boolean =
-        other is WordColor && other.red == red && other.green == green && other.blue == blue
-
-    override fun hashCode(): Int = (red shl 16) or (green shl 8) or blue
-
-    override fun toString(): String = "#%02X%02X%02X".format(red, green, blue)
-
-    companion object {
-        val BLACK = WordColor(0, 0, 0)
-
-        /** `w:val` six hex digits; "auto" and anything malformed mean "automatic". */
-        fun ofHex(value: String?): WordColor? {
-            val text = value?.trim() ?: return null
-            if (text.length != 6) return null
-            val number = text.toIntOrNull(16) ?: return null
-            return WordColor((number shr 16) and 0xFF, (number shr 8) and 0xFF, number and 0xFF)
-        }
-    }
-}
+/** Word's colours are the writer's colours: this type is shared with the PDF side. */
+internal typealias WordColor = PdfColor
 
 internal enum class WordAlign(val id: String) {
     LEFT("left"), CENTER("center"), RIGHT("right"), JUSTIFY("both");
@@ -206,7 +190,10 @@ internal class WordImage(
     val pixelHeight: Int,
     val jpeg: ByteArray? = null,
     val raster: PngImage? = null
-)
+) {
+    /** The writer's view of this picture; one instance per part, so it is embedded once. */
+    val pdf: PdfImage by lazy { PdfImage(jpeg, raster, partName) }
+}
 
 internal sealed interface WordBlock
 
@@ -303,17 +290,3 @@ internal class WordDocument(
     val notes: List<String>
 )
 
-/** Warnings collected while reading; the same note is only reported once. */
-internal class NoteBag {
-    private val seen = LinkedHashSet<String>()
-
-    fun add(note: String) {
-        seen.add(note)
-    }
-
-    fun addAll(notes: Collection<String>) {
-        seen.addAll(notes)
-    }
-
-    fun toList(): List<String> = seen.toList()
-}

@@ -1,5 +1,7 @@
 package com.pdfpaper.convert.word
 
+import com.pdfpaper.convert.ooxml.first
+import com.pdfpaper.convert.ooxml.kids
 import org.w3c.dom.Document
 import org.w3c.dom.Element
 

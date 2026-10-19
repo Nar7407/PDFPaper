@@ -3,6 +3,8 @@ package com.pdfpaper.convert.word
 import org.w3c.dom.Document
 import org.w3c.dom.Element
 import com.pdfpaper.convert.ooxml.childElements
+import com.pdfpaper.convert.ooxml.first
+import com.pdfpaper.convert.ooxml.kids
 
 /** A paragraph style with its `basedOn` chain already merged in. */
 internal class ParagraphStyle(

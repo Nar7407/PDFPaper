@@ -8,12 +8,13 @@ no third-party Office or PDF library: OOXML is a ZIP package
 ./cli convert pdf-to-pptx <in.pdf> --out <out.pptx> [--fidelity]
 ./cli convert pdf-to-docx <in.pdf> --out <out.docx> [--mode flow|exact]
 ./cli convert docx-to-pdf <in.docx> --out <out.pdf>
+./cli convert pptx-to-pdf <in.pptx> --out <out.pdf>
 ```
 
 Every conversion writes a loss report next to the output
 (`<out>.<ext>.report.txt`) and the machine-readable part of it is also returned
 by the API (`PdfToDocxResult.report`, `PdfToPptxResult.report`,
-`DocxToPdfResult.report`).
+`DocxToPdfResult.report`, `PptxToPdfResult.report`).
 
 Verification used for the tables below:
 
@@ -27,6 +28,9 @@ Verification used for the tables below:
 * `./gradlew :convert:docxToPdfCorpusCheck` — converts every DOCX the corpus
   check produced back to PDF and reads each result back with the engine, so the
   table below covers `testdata` documents and not only the fixtures.
+* `./gradlew :convert:pptxToPdfCorpusCheck` — does the same for the PPTX corpus
+  (T17 output → PDF), and `PptxToPdfTest` converts five decks written by
+  `python-pptx` (`convert/tools/make_pptx_samples.py`, an independent writer).
 * `convert/tools/pptx_check.py` and `convert/tools/docx_check.py` — dev-only
   helpers (not build dependencies) that open the outputs with `python-pptx` /
   `python-docx`, i.e. with a third-party reader rather than our own validator.
@@ -156,4 +160,67 @@ filters, CRC checked) and re-deflated as `DeviceRGB`/`DeviceGray` with an
 
 ## PPTX → PDF
 
-Not implemented yet (T20).
+```sh
+./cli convert pptx-to-pdf <in.pptx> --out <out.pdf>
+```
+
+One PDF page per slide, exactly the slide's size (`p:sldSz`), in slide order —
+hidden slides included (reported), so the printed deck is complete. A slide is
+painted back to front: its background, then the shapes in `p:spTree` order.
+Text is drawn with the same PDF **standard 14** fonts, `/WinAnsiEncoding` and
+explicit `/Widths` as DOCX → PDF, and pictures are embedded the same way (JPEG
+`/DCTDecode` verbatim, PNG decoded by our own reader and re-deflated with an
+`/SMask` for transparency). Geometry comes from `a:xfrm`; a placeholder's
+position, insets, anchor, wrap and outline levels are inherited from the layout
+and then the master, attribute by attribute, the way PowerPoint walks the
+chain. Theme colours (`a:schemeClr`) resolve through `a:clrScheme` and the
+master's `p:clrMap`.
+
+### Well converted
+
+| Slide content | Why |
+| --- | --- |
+| Slide size, order and count | One page per slide in `p:sldIdLst` order; the page box is `p:sldSz`. |
+| Placeholder text (`p:ph`) | Position, insets, anchor and outline levels come down the layout→master chain, one attribute at a time: a slide that only drops an empty `a:bodyPr` still gets the master's centring and the title style. |
+| Title, body and list text | Runs with size, bold, italic, underline, strike and colour; bullets (`a:buChar`), auto numbers (`a:buAutoNum`: `arabicPeriod`, `alpha`, `roman`… with a counter per outline level), indents (`marL`/`indent`), left/centre/right/justified alignment (the last line of a justified paragraph is not stretched), line spacing (`a:lnSpc` as a multiple or in points), space before/after, and explicit breaks (`a:br` and the `_x000B_` vertical tab). |
+| Text in plain shapes and text boxes | The same run formatting, with the shape's `p:style` (`fontRef`) and the theme's `a:objectDefaults` filled in underneath the master's other style; `a:wrap="none"` text is never wrapped. |
+| Solid fills | `a:solidFill`/`a:noFill` in an RGB, system or theme colour, with the slide's own colour map (`bg1`, `tx1`, …) resolved through the master. |
+| Rectangles, ellipses and straight connectors | `rect` outlines are drawn as four rules on the edges, an `ellipse` as four Bézier arcs, a `roundRect` as a rectangle with square corners (reported); connectors run corner to corner honouring `flipH`/`flipV`, with the stated width. |
+| Groups | Flattened through the group's `a:xfrm` and `chOff`/`chExt`, so nested shapes land where they belong. |
+| Slide backgrounds | A solid `p:bgPr` colour, or a picture from `p:bgPr`/`p:bgRef` stretched over the page (counted as a picture). |
+| Pictures | Placement from `a:xfrm`; JPEG verbatim, PNG decoded (colour types 0/2/4/6, `tRNS`, bit depths 1–16). |
+| Slide masters and layouts | Their backgrounds and placeholder geometry/styles are used; their decoration shapes are not converted, and the count is reported. |
+
+### Partly converted (opens, looks close, details differ)
+
+| Slide content | What changes |
+| --- | --- |
+| Any font outside the standard 14 (Calibri, Arial, …) | Replaced by a standard font of the same shape, exactly as in DOCX → PDF; every substitute is named in the report. Theme fonts (`+mj-lt`, `+mn-lt`) are resolved to the theme's typeface first, then substituted like any other name. |
+| Characters WinAnsi has no code for | Drawn as `?` and reported once. |
+| Rounded rectangles | Drawn with square corners; reported. |
+| Rotated shapes, pictures and groups (`a:xfrm/@rot`) | Drawn upright; reported. |
+| Fills and outlines taken from `p:style` | The referenced style's first colour is used as a solid approximation; gradients and pattern fills are drawn as their first/foreground colour, picture fills are dropped, and each is reported. |
+| Dashed and custom outlines (`a:prstDash`, `a:custDash`) | Drawn solid; reported. |
+| Shape effects (shadow, glow, reflection) | Not drawn — neither an `a:effectLst` of the shape's own nor the theme's `a:effectStyleLst` entry its `effectRef` points at; reported. |
+| Transparency (`alpha`) | Drawn opaque; reported once. |
+| Text shrunk to fit (`a:normAutofit`) | Drawn at its full size, so it can overflow the frame; reported. |
+| Cropped pictures (`a:srcRect`) | The whole picture is drawn in the frame; reported. |
+| Tiled picture fills (`a:tile`) | Stretched over the frame; reported. |
+| Bullet geometry | The marker is placed at the hanging indent on the first line's baseline; PowerPoint's exact offsets, `a:buFont` shapes and `a:buClr` are approximated. |
+| Line wrap | Greedy wrapping with the substitute font's metrics, so line breaks can move slightly compared with PowerPoint. |
+
+### Badly converted (the result opens but the page is not what it was)
+
+| Slide content | Why |
+| --- | --- |
+| Charts | Skipped (a chart would need a chart renderer); reported. |
+| Tables on a slide (`p:graphicFrame`) | Skipped; a PDF page has no table object and the flow layout only exists in the DOCX converter; reported. |
+| SmartArt, WordArt and diagrams | The drawing frame is skipped and the text inside is not read; reported. |
+| OLE objects and embedded content parts | Skipped; reported. |
+| Video and audio (`a:videoFile`/`a:audioFile`) | Skipped, the poster frame is not drawn either; reported. |
+| Animations (`p:timing`) and transitions (`p:transition`) | Not represented in a PDF; reported. |
+| Fields (`a:fld`) | The text the file last saved for them is drawn; a field the deck never refreshed shows its cached value, and the report says so. |
+| Custom geometry (`a:custGeom`) and shapes with an unknown preset | Skipped; reported. |
+| Bent and curved connectors | Skipped; reported. |
+| 3D, bevel, materials and scene cameras | Shape effects and the 3D parts of the theme are not drawn. |
+| A presentation that relies on its theme's exact fonts, gradients and effects | The text and the layout survive; the styling does not. |

@@ -1,8 +1,12 @@
 package com.pdfpaper.convert.word
 
 import com.pdfpaper.convert.DocxToPdfException
+import com.pdfpaper.convert.NoteBag
 import com.pdfpaper.convert.ooxml.PackageCheck
 import com.pdfpaper.convert.ooxml.childElements
+import com.pdfpaper.convert.ooxml.descendants
+import com.pdfpaper.convert.ooxml.first
+import com.pdfpaper.convert.ooxml.kids
 import com.pdfpaper.convert.raster.PngReader
 import com.pdfpaper.convert.raster.PngResult
 import com.pdfpaper.engine.image.PdfImages

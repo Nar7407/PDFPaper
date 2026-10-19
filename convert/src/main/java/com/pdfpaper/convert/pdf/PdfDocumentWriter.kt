@@ -1,13 +1,6 @@
 package com.pdfpaper.convert.pdf
 
 import com.pdfpaper.convert.raster.Zlib
-import com.pdfpaper.convert.word.ImageOp
-import com.pdfpaper.convert.word.LayoutPage
-import com.pdfpaper.convert.word.PdfOp
-import com.pdfpaper.convert.word.RuleOp
-import com.pdfpaper.convert.word.TextOp
-import com.pdfpaper.convert.word.WordColor
-import com.pdfpaper.convert.word.WordImage
 import com.pdfpaper.engine.model.PdfArray
 import com.pdfpaper.engine.model.PdfDict
 import com.pdfpaper.engine.model.PdfInteger
@@ -31,6 +24,9 @@ import com.pdfpaper.engine.write.PdfDocumentBuilder
  */
 internal object PdfDocumentWriter {
 
+    /** The control-point ratio that turns four Béziers into a circle. */
+    private const val KAPPA = 0.5522847498307933
+
     fun write(pages: List<LayoutPage>, title: String?, producer: String = "PDFPaper"): ByteArray {
         val builder = PdfDocumentBuilder()
         val pagesNumber = builder.allocate()
@@ -51,12 +47,12 @@ internal object PdfDocumentWriter {
         builder.info = builder.add(PdfDict(info))
 
         val fonts = HashMap<StandardFont, PdfRef>()
-        val images = HashMap<WordImage, PdfRef>()
+        val images = HashMap<PdfImage, PdfRef>()
         val kids = ArrayList<PdfObject>()
 
         for (page in pages) {
             val usedFonts = LinkedHashSet<StandardFont>()
-            val usedImages = LinkedHashSet<WordImage>()
+            val usedImages = LinkedHashSet<PdfImage>()
             for (op in page.ops) {
                 when (op) {
                     is TextOp -> usedFonts += op.font
@@ -69,14 +65,14 @@ internal object PdfDocumentWriter {
                 fontNames[font] = "F${index + 1}"
                 fonts.getOrPut(font) { fontDictionary(builder, font) }
             }
-            val imageNames = LinkedHashMap<WordImage, String>()
-            usedImages.sortedBy { it.partName }.forEachIndexed { index, image ->
+            val imageNames = LinkedHashMap<PdfImage, String>()
+            usedImages.sortedBy { it.name }.forEachIndexed { index, image ->
                 imageNames[image] = "Im${index + 1}"
                 images.getOrPut(image) {
                     when {
                         image.jpeg != null -> PdfImageXObjects.create(builder, image.jpeg)
                         image.raster != null -> PdfImageXObjects.create(builder, image.raster)
-                        else -> error("picture ${image.partName} has no pixels")
+                        else -> error("picture ${image.name} has no pixels")
                     }
                 }
             }
@@ -139,7 +135,7 @@ internal object PdfDocumentWriter {
     private fun content(
         page: LayoutPage,
         fontNames: Map<StandardFont, String>,
-        imageNames: Map<WordImage, String>
+        imageNames: Map<PdfImage, String>
     ): ByteArray {
         val out = StringBuilder()
         for (op in page.ops) {
@@ -176,6 +172,16 @@ internal object PdfDocumentWriter {
                     }
                 }
                 is RuleOp -> rule(out, op.x, op.y, op.width, op.height, op.color, page.height)
+                is EllipseOp -> ellipse(out, op, page.height)
+                is LineOp -> {
+                    // Stroked segment (§8.5.3.1: m/l/S), round caps so thin
+                    // lines stay visible at any zoom.
+                    out.append("1 J 1 j ")
+                        .append(number(op.width)).append(" w ")
+                        .append(strokeColor(op.color)).append(' ')
+                        .append(number(op.x1)).append(' ').append(y(page.height, op.y1)).append(" m ")
+                        .append(number(op.x2)).append(' ').append(y(page.height, op.y2)).append(" l S\n")
+                }
                 is ImageOp -> {
                     val name = imageNames[op.image] ?: continue
                     out.append("q ")
@@ -222,7 +228,7 @@ internal object PdfDocumentWriter {
         y: Double,
         width: Double,
         height: Double,
-        color: WordColor,
+        color: PdfColor,
         pageHeight: Double
     ) {
         if (width <= 0.0 || height <= 0.0) return
@@ -233,8 +239,46 @@ internal object PdfDocumentWriter {
             .append(number(height)).append(" re f\n")
     }
 
-    private fun color(color: WordColor): String = "${number(color.red / 255.0)} " +
+    private fun color(color: PdfColor): String = "${number(color.red / 255.0)} " +
         "${number(color.green / 255.0)} ${number(color.blue / 255.0)}"
+
+    /** The stroking variant of [color] (`RG`); fills use `rg`. */
+    private fun strokeColor(color: PdfColor): String = "${number(color.red / 255.0)} " +
+        "${number(color.green / 255.0)} ${number(color.blue / 255.0)} RG"
+
+    private fun y(pageHeight: Double, fromTop: Double): String = number(pageHeight - fromTop)
+
+    /** An ellipse as four Bézier arcs (§8.5.2.2), the usual kappa form. */
+    private fun ellipse(out: StringBuilder, op: EllipseOp, pageHeight: Double) {
+        val rx = op.width / 2.0
+        val ry = op.height / 2.0
+        if (rx <= 0.0 || ry <= 0.0) return
+        val cx = op.x + rx
+        val cy = op.y + ry
+        val kx = rx * KAPPA
+        val ky = ry * KAPPA
+        out.append(number(cx - rx)).append(' ').append(y(pageHeight, cy)).append(" m\n")
+        fun curve(x1: Double, y1: Double, x2: Double, y2: Double, x3: Double, y3: Double) {
+            out.append(number(x1)).append(' ').append(y(pageHeight, y1)).append(' ')
+                .append(number(x2)).append(' ').append(y(pageHeight, y2)).append(' ')
+                .append(number(x3)).append(' ').append(y(pageHeight, y3)).append(" c\n")
+        }
+        curve(cx - rx, cy - ky, cx - kx, cy - ry, cx, cy - ry)
+        curve(cx + kx, cy - ry, cx + rx, cy - ky, cx + rx, cy)
+        curve(cx + rx, cy + ky, cx + kx, cy + ry, cx, cy + ry)
+        curve(cx - kx, cy + ry, cx - rx, cy + ky, cx - rx, cy)
+        if (op.fill != null) out.append(color(op.fill)).append(" rg\n")
+        if (op.line != null) {
+            out.append(number(op.lineWidth)).append(" w ").append(strokeColor(op.line)).append('\n')
+        }
+        out.append(
+            when {
+                op.fill != null && op.line != null -> "B\n"
+                op.fill != null -> "f\n"
+                else -> "S\n"
+            }
+        )
+    }
 
     /** A standard-font dictionary with the widths a reader needs (§9.6.2.2). */
     private fun fontDictionary(builder: PdfDocumentBuilder, font: StandardFont): PdfRef {

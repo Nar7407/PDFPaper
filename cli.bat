@@ -30,4 +30,5 @@ echo        cli add-text^|add-image^|list-images^|move-image^|replace-image^|del
 echo        cli convert pdf-to-pptx ^<in.pdf^> --out ^<out.pptx^> [--fidelity] 1>&2
 echo        cli convert pdf-to-docx ^<in.pdf^> --out ^<out.docx^> [--mode flow^|exact] 1>&2
 echo        cli convert docx-to-pdf ^<in.docx^> --out ^<out.pdf^> 1>&2
+echo        cli convert pptx-to-pdf ^<in.pptx^> --out ^<out.pdf^> 1>&2
 exit /b 2

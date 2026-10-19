@@ -1,6 +1,8 @@
 package com.pdfpaper.convert.word
 
 import com.pdfpaper.convert.ooxml.PackageCheck
+import com.pdfpaper.convert.ooxml.descendants
+import com.pdfpaper.convert.ooxml.first
 import org.w3c.dom.Document
 import org.w3c.dom.Element
 

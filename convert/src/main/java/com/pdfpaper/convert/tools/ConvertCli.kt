@@ -6,6 +6,8 @@ import com.pdfpaper.convert.PdfToDocx
 import com.pdfpaper.convert.PdfToDocxOptions
 import com.pdfpaper.convert.PdfToPptx
 import com.pdfpaper.convert.PdfToPptxOptions
+import com.pdfpaper.convert.PptxToPdf
+import com.pdfpaper.convert.PptxToPdfOptions
 import com.pdfpaper.convert.docx.DocxMode
 import java.io.File
 import kotlin.system.exitProcess
@@ -14,6 +16,7 @@ import kotlin.system.exitProcess
  * `convert pdf-to-pptx <in.pdf> --out <out.pptx> [options]`
  * `convert pdf-to-docx <in.pdf> --out <out.docx> [options]`
  * `convert docx-to-pdf <in.docx> --out <out.pdf> [options]`
+ * `convert pptx-to-pdf <in.pptx> --out <out.pdf> [options]`
  *
  * Exit codes: 0 success, 1 bad usage, 2 conversion failure.
  */
@@ -33,6 +36,7 @@ private fun run(rawArgs: Array<String>): Int {
         "pdf-to-pptx" -> pdfToPptx(args.drop(1))
         "pdf-to-docx" -> pdfToDocx(args.drop(1))
         "docx-to-pdf" -> docxToPdf(args.drop(1))
+        "pptx-to-pdf" -> pptxToPdf(args.drop(1))
         "help", "--help", "-h" -> {
             usage()
             0
@@ -284,6 +288,75 @@ private fun docxToPdf(args: List<String>): Int {
     }
 }
 
+private fun pptxToPdf(args: List<String>): Int {
+    var out: String? = null
+    var report: String? = null
+    var quiet = false
+
+    var i = 0
+    var positional: String? = null
+    while (i < args.size) {
+        val arg = args[i]
+        when {
+            arg == "--out" -> out = args.getOrNull(++i)
+            arg.startsWith("--out=") -> out = arg.substringAfter('=')
+            arg == "--report" -> report = args.getOrNull(++i)
+            arg.startsWith("--report=") -> report = arg.substringAfter('=')
+            arg == "--quiet" -> quiet = true
+            arg.startsWith("--") -> {
+                System.err.println("unknown option: $arg")
+                usage()
+                return 1
+            }
+            else -> {
+                if (positional != null) {
+                    System.err.println("unexpected argument: $arg")
+                    usage()
+                    return 1
+                }
+                positional = arg
+            }
+        }
+        i++
+    }
+    val input = positional
+
+    if (input == null || out == null) {
+        System.err.println("pptx-to-pdf needs an input file and --out <file.pdf>")
+        usage()
+        return 1
+    }
+    val inputFile = File(input)
+    if (!inputFile.isFile) {
+        System.err.println("input file not found: $input")
+        return 2
+    }
+    return try {
+        val result = PptxToPdf.convertFile(inputFile, PptxToPdfOptions())
+        val outputFile = File(out)
+        outputFile.parentFile?.mkdirs()
+        outputFile.writeBytes(result.bytes)
+        val reportFile = File(report ?: "$out.report.txt")
+        reportFile.writeText(result.report.toText())
+
+        if (!quiet) {
+            val p = result.report
+            println("converted $input -> $out")
+            println(
+                "  slides: ${p.slides}, shapes: ${p.shapes}, pictures: ${p.pictures}, " +
+                    "text boxes: ${p.textBoxes}, list items: ${p.listItems}"
+            )
+            if (p.hasLosses) {
+                println("  some content was dropped or approximated (see ${reportFile.path})")
+            }
+        }
+        0
+    } catch (t: Throwable) {
+        System.err.println("conversion failed: ${t.message}")
+        2
+    }
+}
+
 private fun usage() {
     System.err.println(
         """
@@ -310,6 +383,11 @@ private fun usage() {
               [--quiet]
 
           docx-to-pdf <in.docx> --out <out.pdf>
+              [--report <file>]   write the loss report here
+                                  (default <out.pdf>.report.txt)
+              [--quiet]
+
+          pptx-to-pdf <in.pptx> --out <out.pdf>
               [--report <file>]   write the loss report here
                                   (default <out.pdf>.report.txt)
               [--quiet]
