@@ -83,6 +83,17 @@ tasks.register<JavaExec>("comments") {
     workingDir = rootProject.projectDir
 }
 
+// T23: stamp CLI. Usage:
+//   ./gradlew :engine:stamp --args="stamp list"
+tasks.register<JavaExec>("stamp") {
+    group = "verification"
+    description = "List the stamp library and add stamp annotations to a PDF."
+    classpath = sourceSets["main"].runtimeClasspath
+    mainClass.set("com.pdfpaper.engine.tools.PdfStampCliKt")
+    // Paths on the command line are resolved from the repo root, not engine/.
+    workingDir = rootProject.projectDir
+}
+
 // T14: generates a scaled sibling corpus (the committed /testdata files are
 // tiny structural fixtures) and times each engine phase against it.
 tasks.register<JavaExec>("perfCheck") {

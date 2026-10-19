@@ -137,6 +137,7 @@ import com.pdfpaper.engine.annot.HighlightSpec
 import com.pdfpaper.engine.annot.InkSpec
 import com.pdfpaper.engine.annot.NoteSpec
 import com.pdfpaper.engine.annot.ReplySpec
+import com.pdfpaper.engine.annot.StampSpec
 import com.pdfpaper.engine.annot.StatusSpec
 import com.pdfpaper.engine.annot.UnderlineSpec
 import com.pdfpaper.engine.form.FieldKind
@@ -1619,9 +1620,9 @@ private fun DrawScope.drawPendingAnnotations(
                 drawRect(color = noteColor, topLeft = topLeft, size = extent)
                 drawRect(color = noteBorder, topLeft = topLeft, size = extent, style = Stroke(1.5f))
             }
-            // Comments written by the engine CLI (T22); the viewer has no tool
-            // that creates them, so there is nothing pending to draw.
-            is UnderlineSpec, is ReplySpec, is StatusSpec -> Unit
+            // Comments written by the engine CLI (T22) and stamps (T23); the
+            // viewer has no tool that creates them, so nothing is pending.
+            is UnderlineSpec, is ReplySpec, is StatusSpec, is StampSpec -> Unit
         }
     }
     if (inkDraft != null) drawPolyline(plan, inkDraft.points, inkColor, 3f)

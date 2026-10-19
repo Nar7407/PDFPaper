@@ -2,9 +2,9 @@ package com.pdfpaper.engine.create
 
 import com.pdfpaper.engine.edit.ImageData
 import com.pdfpaper.engine.edit.ImageXObjects
-import com.pdfpaper.engine.edit.Standard14
 import com.pdfpaper.engine.edit.StandardFont
 import com.pdfpaper.engine.edit.WinAnsi
+import com.pdfpaper.engine.edit.addStandardFont
 import com.pdfpaper.engine.graphics.PdfColor
 import com.pdfpaper.engine.model.PdfArray
 import com.pdfpaper.engine.model.PdfDict
@@ -99,7 +99,7 @@ class PdfBuilder(
             val fontNames = LinkedHashMap<StandardFont, String>()
             usedFonts.forEachIndexed { index, font ->
                 fontNames[font] = "F${index + 1}"
-                fonts.getOrPut(font) { addFont(document, font) }
+                fonts.getOrPut(font) { addStandardFont(document, font) }
             }
             val imageNames = LinkedHashMap<ImageData, String>()
             usedImages.forEachIndexed { index, image ->
@@ -192,28 +192,6 @@ class PdfBuilder(
         } else {
             PdfString(byteArrayOf(0xFE.toByte(), 0xFF.toByte()) + value.toByteArray(Charsets.UTF_16BE))
         }
-
-    // -- Fonts ----------------------------------------------------------------
-
-    /** A standard-font dictionary with AFM widths (§9.6.2.2, Table 111). */
-    private fun addFont(document: PdfDocumentBuilder, font: StandardFont): PdfRef {
-        val widths = PdfArray(
-            (32..255).map { code -> PdfInteger(Standard14.width1000(font, code).toLong()) }
-        )
-        return document.add(
-            PdfDict(
-                linkedMapOf(
-                    PdfName("Type") to PdfName("Font"),
-                    PdfName("Subtype") to PdfName("Type1"),
-                    PdfName("BaseFont") to PdfName(font.baseFont),
-                    PdfName("Encoding") to PdfName("WinAnsiEncoding"),
-                    PdfName("FirstChar") to PdfInteger(32),
-                    PdfName("LastChar") to PdfInteger(255),
-                    PdfName("Widths") to widths
-                )
-            )
-        )
-    }
 
     // -- Content --------------------------------------------------------------
 

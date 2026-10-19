@@ -11,6 +11,8 @@ import com.pdfpaper.engine.model.PdfObject
 import com.pdfpaper.engine.model.PdfReal
 import com.pdfpaper.engine.model.PdfRef
 import com.pdfpaper.engine.model.PdfString
+import com.pdfpaper.engine.stamp.StampPainter
+import com.pdfpaper.engine.stamp.StampText
 import com.pdfpaper.engine.write.PdfDocumentBuilder
 import com.pdfpaper.engine.write.PdfSerializer
 import java.io.ByteArrayOutputStream
@@ -19,8 +21,8 @@ import java.nio.charset.StandardCharsets
 /**
  * A new annotation to add to a page when saving (ISO 32000-1, §12.5.6):
  * a text markup highlight or underline, a freehand ink stroke set, a text
- * note, a comment reply or a review state change. [pageIndex] is a zero-based
- * index into the source document's pages.
+ * note, a stamp, a comment reply or a review state change. [pageIndex] is a
+ * zero-based index into the source document's pages.
  */
 sealed interface AnnotationSpec {
     val pageIndex: Int
@@ -127,9 +129,9 @@ private val REPLY_FALLBACK_COLOR = PdfColor(1.0, 0.87, 0.0)
  * Builds the dictionaries and appearance streams for [AnnotationSpec]s
  * (§12.5.5 appearance streams, §12.5.6 subtypes). Streams are self-contained:
  * a highlight carries its own /ExtGState blend, an underline a rule, an ink
- * annotation its /BS, a note (and a reply) its icon drawing, so any viewer can
- * render them without guessing. Popup windows carry no appearance stream
- * (§12.5.6.14).
+ * annotation its /BS, a note (and a reply) its icon drawing, a stamp its
+ * border, colours, text, opacity and rotation, so any viewer can render them
+ * without guessing. Popup windows carry no appearance stream (§12.5.6.14).
  */
 internal class AnnotationWriter(private val builder: PdfDocumentBuilder) {
 
@@ -154,6 +156,7 @@ internal class AnnotationWriter(private val builder: PdfDocumentBuilder) {
         is NoteSpec -> buildNote(spec, pageRef, pageBox)
         is ReplySpec -> buildReply(spec, pageRef, resolveAnnot)
         is StatusSpec -> buildStatus(spec, pageRef, resolveAnnot)
+        is StampSpec -> listOfNotNull(buildStamp(spec, pageRef))
     }
 
     private fun buildHighlight(spec: HighlightSpec, pageRef: PdfRef, pageBox: PdfRect?): List<PdfRef> {
@@ -301,6 +304,32 @@ internal class AnnotationWriter(private val builder: PdfDocumentBuilder) {
         annot[PdfName("RT")] = PdfName(spec.replyType.pdfName)
         annot[PdfName("AP")] = dict("N" to ap)
         return listOf(builder.add(PdfDict(annot)))
+    }
+
+    /**
+     * A /Stamp (§12.5.6.7) painted by [StampPainter]. The appearance is
+     * self-contained (border, colours, text, picture, opacity and rotation),
+     * so a viewer renders it without interpreting the annotation's looks.
+     * Dynamic designs add their "By <author> / at <date>" line here, at
+     * placement time, and say so in /Contents for the comment list.
+     */
+    private fun buildStamp(spec: StampSpec, pageRef: PdfRef): PdfRef? {
+        val placed = spec.timestamp ?: System.currentTimeMillis()
+        val lines = if (spec.design.dynamic) StampText.lines(spec.author, placed) else emptyList()
+        val appearance = StampPainter.paint(
+            builder, spec.design, spec.size, spec.rotation, spec.opacity, lines, spec.image
+        ) ?: return null
+        if (appearance.width <= 0.0 || appearance.height <= 0.0) return null
+        val box = PdfRect(spec.x, spec.y, spec.x + appearance.width, spec.y + appearance.height)
+        val contents = if (spec.design.dynamic) StampText.contents(spec.design.label, spec.author, placed)
+        else spec.design.label
+        val ap = form(listOf(0.0, 0.0, appearance.width, appearance.height), appearance.resources, appearance.content)
+        val annot = LinkedHashMap<PdfName, PdfObject>()
+        common(annot, "Stamp", box, contents, spec.author, pageRef, subject = spec.design.group.label, creation = true)
+        spec.design.standardName?.let { annot[PdfName("Name")] = PdfName(it) }
+        if (spec.opacity < 1.0) annot[PdfName("CA")] = real(spec.opacity.coerceIn(0.0, 1.0))
+        annot[PdfName("AP")] = dict("N" to ap)
+        return builder.add(PdfDict(annot))
     }
 
     /**
