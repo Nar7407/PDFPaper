@@ -30,7 +30,9 @@ internal class PageEditApplier(
     private val page: PdfPage,
     private val edits: List<PageEdit>,
     /** Receives one report per applied text edit (T16). */
-    private val textReports: MutableList<TextEditReport> = ArrayList()
+    private val textReports: MutableList<TextEditReport> = ArrayList(),
+    /** Shared invisible-text font, created only when an OCR edit needs it (T25). */
+    private val ocrFont: Lazy<OcrTextFont>
 ) {
 
     private val fontResources = LinkedHashMap<PdfName, PdfObject>()
@@ -39,6 +41,7 @@ internal class PageEditApplier(
     private val addedImageNames = HashSet<String>()
     private val existingImageNames = HashSet<String>()
     private var nextResource = 1
+    private var ocrName: PdfName? = null
 
     private val originalCommands: List<ContentCommand> by lazy {
         parseContent(page.contents().getOrNull()?.bytes ?: ByteArray(0)).commands
@@ -136,6 +139,7 @@ internal class PageEditApplier(
         for (edit in edits) {
             when (edit) {
                 is AddTextEdit -> ContentSerializer.write(textCommands(edit), out)
+                is AddOcrTextEdit -> ContentSerializer.write(ocrTextCommands(edit), out)
                 is AddImageEdit -> ContentSerializer.write(imageCommands(edit), out)
                 is ReplaceImageEdit -> replaceImage(edit)
                 else -> {}
@@ -153,6 +157,7 @@ internal class PageEditApplier(
         for (edit in edits) {
             when (edit) {
                 is AddTextEdit -> model.commands += textCommands(edit)
+                is AddOcrTextEdit -> model.commands += ocrTextCommands(edit)
                 is AddImageEdit -> model.commands += imageCommands(edit)
                 is MoveImageEdit -> model.move(edit.imageId, edit.dx, edit.dy)
                 is ResizeImageEdit -> model.resize(edit.imageId, edit.x, edit.y, edit.width, edit.height)
@@ -249,6 +254,42 @@ internal class PageEditApplier(
             ContentCommand(emptyList(), "ET"),
             ContentCommand(emptyList(), "Q")
         )
+    }
+
+    /**
+     * One invisible word (T25): Tr 3 (§9.3.6), the shared Identity-H font, the
+     * OCR word's text matrix and horizontal scale, then one Tj.
+     */
+    private fun ocrTextCommands(edit: AddOcrTextEdit): List<ContentCommand> {
+        val bytes = ocrFont.value.encode(edit.text)
+        if (bytes.isEmpty()) return emptyList()
+        val name = ocrFontName()
+        val m = edit.matrix
+        return listOf(
+            ContentCommand(emptyList(), "q"),
+            ContentCommand(listOf(PdfInteger(3)), "Tr"),
+            ContentCommand(emptyList(), "BT"),
+            ContentCommand(listOf(name, PdfReal(edit.size)), "Tf"),
+            ContentCommand(listOf(PdfReal(edit.horizontalScale)), "Tz"),
+            ContentCommand(
+                listOf(
+                    PdfReal(m.a), PdfReal(m.b), PdfReal(m.c),
+                    PdfReal(m.d), PdfReal(m.e), PdfReal(m.f)
+                ),
+                "Tm"
+            ),
+            ContentCommand(listOf(PdfString(bytes)), "Tj"),
+            ContentCommand(emptyList(), "ET"),
+            ContentCommand(emptyList(), "Q")
+        )
+    }
+
+    private fun ocrFontName(): PdfName {
+        ocrName?.let { return it }
+        val name = freshName("PpO")
+        fontResources[name] = ocrFont.value.fontRef
+        ocrName = name
+        return name
     }
 
     private fun imageCommands(edit: AddImageEdit): List<ContentCommand> {

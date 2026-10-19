@@ -1,5 +1,6 @@
 package com.pdfpaper.engine.edit
 
+import com.pdfpaper.engine.geom.PdfMatrix
 import com.pdfpaper.engine.graphics.PdfColor
 
 /**
@@ -87,6 +88,20 @@ class MoveTextEdit(
     val runId: Int,
     val dx: Double,
     val dy: Double
+) : PageEdit
+
+/**
+ * One word of an OCR text layer (task T25), drawn invisibly with render mode 3
+ * (§9.3.6). [matrix] maps text space to page user space, [size] is the word's
+ * height in text-space units, and [horizontalScale] is the Tz percentage that
+ * makes the run span the recognized word box exactly.
+ */
+class AddOcrTextEdit(
+    override val pageIndex: Int,
+    val text: String,
+    val matrix: PdfMatrix,
+    val size: Double,
+    val horizontalScale: Double
 ) : PageEdit
 
 /**

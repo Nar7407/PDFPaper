@@ -2,6 +2,7 @@ package com.pdfpaper.engine.write
 
 import com.pdfpaper.engine.annot.AnnotationSpec
 import com.pdfpaper.engine.annot.AnnotationWriter
+import com.pdfpaper.engine.edit.OcrTextFont
 import com.pdfpaper.engine.edit.PageEdit
 import com.pdfpaper.engine.edit.PageEditApplier
 import com.pdfpaper.engine.edit.TextEditReport
@@ -90,6 +91,9 @@ internal class PdfDocumentAssembler(
     private val editsByPage: Map<Int, List<PageEdit>> = edits.groupBy { it.pageIndex }
     private val annotationWriter: AnnotationWriter by lazy { AnnotationWriter(builder) }
 
+    /** Shared OCR text font for T25 edits; created on the first invisible word. */
+    private val ocrFont: Lazy<OcrTextFont> = lazy { OcrTextFont(builder) }
+
     /** Reports from text edits applied while copying (task T16). */
     private val textReports = ArrayList<TextEditReport>()
 
@@ -167,6 +171,7 @@ internal class PdfDocumentAssembler(
         if (formValues.isNotEmpty()) FormFiller(builder).fill(formValues)
         copyInfo()
         copyId()
+        if (ocrFont.isInitialized()) ocrFont.value.finish()
         return builder.build()
     }
 
@@ -215,7 +220,7 @@ internal class PdfDocumentAssembler(
                 PdfInteger(normalizeRotation(page.rotate + selection.rotationDelta).toLong())
         }
         if (edited) {
-            PageEditApplier(builder, copier, page, pageEdits, textReports).apply(entries)
+            PageEditApplier(builder, copier, page, pageEdits, textReports, ocrFont).apply(entries)
         }
         builder.put(ref.objNum, PdfDict(entries))
     }

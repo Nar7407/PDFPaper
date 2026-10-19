@@ -94,6 +94,17 @@ tasks.register<JavaExec>("stamp") {
     workingDir = rootProject.projectDir
 }
 
+// T25: OCR text-layer CLI. Usage:
+//   ./gradlew :engine:ocr --args="ocr in.pdf --lang eng+hin --out out.pdf"
+tasks.register<JavaExec>("ocr") {
+    group = "verification"
+    description = "Add an invisible OCR text layer to scanned pages (stub provider)."
+    classpath = sourceSets["main"].runtimeClasspath
+    mainClass.set("com.pdfpaper.engine.tools.PdfOcrCliKt")
+    // Paths on the command line are resolved from the repo root, not engine/.
+    workingDir = rootProject.projectDir
+}
+
 // T14: generates a scaled sibling corpus (the committed /testdata files are
 // tiny structural fixtures) and times each engine phase against it.
 tasks.register<JavaExec>("perfCheck") {

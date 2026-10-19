@@ -15,6 +15,7 @@ if /I "%~1"=="text-to-pdf" goto createpdf
 if /I "%~1"=="comments" goto comments
 if /I "%~1"=="stamp" goto stamp
 if /I "%~1"=="signatures" goto signatures
+if /I "%~1"=="ocr" goto ocr
 goto usage
 
 :fontinfo
@@ -46,6 +47,10 @@ exit /b %ERRORLEVEL%
 call "%~dp0gradlew.bat" -q :signatures:verify --args="%*"
 exit /b %ERRORLEVEL%
 
+:ocr
+call "%~dp0gradlew.bat" -q :engine:ocr --args="%*"
+exit /b %ERRORLEVEL%
+
 :usage
 echo Usage: cli fontinfo ^<file.pdf^> --page ^<n^> 1>&2
 echo        cli add-text^|add-image^|list-images^|move-image^|replace-image^|delete-image ... 1>&2
@@ -59,4 +64,5 @@ echo        cli text-to-pdf ^<in.txt^> --out ^<out.pdf^> 1>&2
 echo        cli comments list^|add^|reply^|set-status ... 1>&2
 echo        cli stamp list^|add ... 1>&2
 echo        cli signatures verify ^<file.pdf^> [--truststore ^<pem-or-keystore^>] [--password ^<pw^>] 1>&2
+echo        cli ocr ^<file.pdf^> [--lang eng+hin] [--out ^<out.pdf^>] [--pages 1,3-5] [--text ^<words^>] 1>&2
 exit /b 2
