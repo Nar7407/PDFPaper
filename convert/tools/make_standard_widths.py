@@ -1,7 +1,7 @@
-"""Generates the standard-14 text width tables used by DOCX->PDF layout.
+"""Generates the standard-14 width tables used by PDF creation and layout.
 
-The PdfPaper engine has no glyph outline rasterizer and the convert module may
-not use `java.awt`, so the DOCX->PDF layout needs advance widths for the PDF
+The PdfPaper engine has no glyph outline rasterizer and may not use `java.awt`,
+so the PDF builder and the DOCX->PDF layout need advance widths for the PDF
 standard 14 fonts (the fonts every reader has: Helvetica, Times, Courier and
 their bold/italic variants). Those widths are not shipped by the JDK, so they
 are generated once, here, from reportlab's copy of the Adobe AFM metrics
@@ -10,7 +10,7 @@ and the build has no new dependency).
 
     python convert/tools/make_standard_widths.py
 
-Writes convert/src/main/java/com/pdfpaper/convert/pdf/StandardWidths.kt.
+Writes engine/src/main/java/com/pdfpaper/engine/edit/StandardWidths.kt.
 Re-run only when the font set changes.
 """
 
@@ -35,15 +35,15 @@ FONTS = [
     ("COURIER_BOLD_OBLIQUE", "Courier-BoldOblique"),
 ]
 
-HEADER = '''package com.pdfpaper.convert.pdf
+HEADER = '''package com.pdfpaper.engine.edit
 
 /**
  * Font metrics, in 1/1000 em, for the 256 WinAnsi codes of the PDF standard 14
  * text fonts: advance widths (§9.7.4), the AFM ascender and descender.
  *
  * Generated from the Adobe AFM metrics by `convert/tools/make_standard_widths.py`
- * — do not edit by hand. The widths are what makes line breaking, centring and
- * justification exact without the module embedding (or measuring) a font.
+ * — do not edit by hand. The widths make line breaking, centring and
+ * justification exact without embedding (or measuring) a font.
  */
 internal object StandardWidths {
 
@@ -72,7 +72,10 @@ def rows(values: list[int], per_line: int = 16) -> list[str]:
 
 
 def main() -> int:
-    out = Path(__file__).resolve().parents[1] / "src/main/java/com/pdfpaper/convert/pdf/StandardWidths.kt"
+    out = (
+        Path(__file__).resolve().parents[2]
+        / "engine/src/main/java/com/pdfpaper/engine/edit/StandardWidths.kt"
+    )
     parts = [HEADER]
     for name, base_font in FONTS:
         values = widths(base_font)

@@ -1,12 +1,12 @@
-package com.pdfpaper.convert.pdf
+package com.pdfpaper.engine.edit
 
 /**
  * Font metrics, in 1/1000 em, for the 256 WinAnsi codes of the PDF standard 14
  * text fonts: advance widths (§9.7.4), the AFM ascender and descender.
  *
  * Generated from the Adobe AFM metrics by `convert/tools/make_standard_widths.py`
- * — do not edit by hand. The widths are what makes line breaking, centring and
- * justification exact without the module embedding (or measuring) a font.
+ * — do not edit by hand. The widths make line breaking, centring and
+ * justification exact without embedding (or measuring) a font.
  */
 internal object StandardWidths {
 

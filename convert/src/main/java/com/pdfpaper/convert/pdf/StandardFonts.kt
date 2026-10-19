@@ -1,5 +1,8 @@
 package com.pdfpaper.convert.pdf
 
+import com.pdfpaper.engine.edit.Standard14
+import com.pdfpaper.engine.edit.StandardFont as EngineStandardFont
+
 /**
  * The PDF standard 14 text fonts used for DOCX→PDF output (§9.6.2.2). A DOCX
  * usually names its own fonts (Calibri, Arial, Times New Roman, ...) and embeds
@@ -102,14 +105,22 @@ internal object StandardFonts {
         }
     }
 
+    /** The engine font with the same metrics, for the shared AFM tables. */
+    private val ENGINE: Map<StandardFont, EngineStandardFont> =
+        StandardFont.values().associateWith { font ->
+        EngineStandardFont.byName(font.baseName)
+            ?: error("no engine standard font for ${font.baseName}")
+    }
+
     /** Advance width of one WinAnsi code in 1/1000 em (§9.7.4). */
-    fun width1000(font: StandardFont, code: Int): Int = StandardWidths.ALL[font.ordinal][code and 0xFF]
+    fun width1000(font: StandardFont, code: Int): Int =
+        Standard14.width1000(ENGINE.getValue(font), code)
 
     /** AFM ascender in 1/1000 em (positive). */
-    fun ascent1000(font: StandardFont): Int = StandardWidths.ASCENT[font.ordinal]
+    fun ascent1000(font: StandardFont): Int = Standard14.ascent1000(ENGINE.getValue(font))
 
     /** AFM descender in 1/1000 em (negative). */
-    fun descent1000(font: StandardFont): Int = StandardWidths.DESCENT[font.ordinal]
+    fun descent1000(font: StandardFont): Int = Standard14.descent1000(ENGINE.getValue(font))
 
     /**
      * One line at single spacing: the font's ascent and descent plus 0.2 em of

@@ -61,6 +61,17 @@ tasks.register<JavaExec>("pdfedit") {
     workingDir = rootProject.projectDir
 }
 
+// T21: PDF creation CLI. Usage:
+//   ./gradlew :engine:create --args="create blank --size A4 --out out.pdf"
+tasks.register<JavaExec>("create") {
+    group = "verification"
+    description = "Create PDFs from a blank page, images or text (create/images-to-pdf/text-to-pdf)."
+    classpath = sourceSets["main"].runtimeClasspath
+    mainClass.set("com.pdfpaper.engine.tools.PdfCreateCliKt")
+    // Paths on the command line are resolved from the repo root, not engine/.
+    workingDir = rootProject.projectDir
+}
+
 // T14: generates a scaled sibling corpus (the committed /testdata files are
 // tiny structural fixtures) and times each engine phase against it.
 tasks.register<JavaExec>("perfCheck") {

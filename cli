@@ -8,6 +8,9 @@ usage() {
     echo "       cli convert pdf-to-docx <in.pdf> --out <out.docx> [--mode flow|exact]" >&2
     echo "       cli convert docx-to-pdf <in.docx> --out <out.pdf>" >&2
     echo "       cli convert pptx-to-pdf <in.pptx> --out <out.pdf>" >&2
+    echo "       cli create blank --size A4 --out <out.pdf>" >&2
+    echo "       cli images-to-pdf <image>... --out <out.pdf> [--fit fit|fill|original]" >&2
+    echo "       cli text-to-pdf <in.txt> --out <out.pdf>" >&2
     exit 2
 }
 
@@ -29,6 +32,9 @@ case "$1" in
         ;;
     convert)
         exec "$root/gradlew" -q :convert:convert --args="$*"
+        ;;
+    create|images-to-pdf|text-to-pdf)
+        exec "$root/gradlew" -q :engine:create --args="$*"
         ;;
     *)
         usage
