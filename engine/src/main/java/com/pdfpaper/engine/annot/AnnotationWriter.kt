@@ -3,6 +3,7 @@ package com.pdfpaper.engine.annot
 import com.pdfpaper.engine.geom.PdfRect
 import com.pdfpaper.engine.graphics.PdfColor
 import com.pdfpaper.engine.model.PdfArray
+import com.pdfpaper.engine.model.PdfBoolean
 import com.pdfpaper.engine.model.PdfDict
 import com.pdfpaper.engine.model.PdfInteger
 import com.pdfpaper.engine.model.PdfName
@@ -14,28 +15,52 @@ import com.pdfpaper.engine.write.PdfDocumentBuilder
 import com.pdfpaper.engine.write.PdfSerializer
 import java.io.ByteArrayOutputStream
 import java.nio.charset.StandardCharsets
-import java.util.Calendar
-import java.util.TimeZone
 
 /**
  * A new annotation to add to a page when saving (ISO 32000-1, §12.5.6):
- * a text markup highlight, a freehand ink stroke set, or a text note.
- * [pageIndex] is a zero-based index into the source document's pages.
+ * a text markup highlight or underline, a freehand ink stroke set, a text
+ * note, a comment reply or a review state change. [pageIndex] is a zero-based
+ * index into the source document's pages.
  */
 sealed interface AnnotationSpec {
     val pageIndex: Int
 }
 
-/** /Highlight built from page-space rectangles (§12.5.6.10). */
+/**
+ * /Highlight built from page-space rectangles (§12.5.6.10). [title] is the
+ * author (/T), [subject] the short subject (/Subj); with [popup] the writer
+ * also creates the /Popup window that shows [contents] (§12.5.6.14).
+ */
 class HighlightSpec(
     override val pageIndex: Int,
     val rects: List<PdfRect>,
     val color: PdfColor = DEFAULT_HIGHLIGHT_COLOR,
     val contents: String? = null,
-    val title: String? = null
+    val title: String? = null,
+    val subject: String? = null,
+    val open: Boolean = false,
+    val popup: Boolean = false
 ) : AnnotationSpec {
     companion object {
         val DEFAULT_HIGHLIGHT_COLOR = PdfColor(1.0, 0.92, 0.23)
+    }
+}
+
+/** /Underline built from page-space rectangles (§12.5.6.10), drawn at [width] points. */
+class UnderlineSpec(
+    override val pageIndex: Int,
+    val rects: List<PdfRect>,
+    val color: PdfColor = DEFAULT_UNDERLINE_COLOR,
+    val width: Double = 1.0,
+    val contents: String? = null,
+    val title: String? = null,
+    val subject: String? = null,
+    val open: Boolean = false,
+    val popup: Boolean = false
+) : AnnotationSpec {
+    companion object {
+        /** Acrobat's default underline colour. */
+        val DEFAULT_UNDERLINE_COLOR = PdfColor(1.0, 0.0, 0.0)
     }
 }
 
@@ -54,39 +79,86 @@ class NoteSpec(
     override val pageIndex: Int,
     val rect: PdfRect,
     val contents: String,
-    val color: PdfColor = PdfColor(1.0, 0.87, 0.0),
+    val color: PdfColor = DEFAULT_NOTE_COLOR,
     val title: String? = null,
-    val open: Boolean = false
+    val open: Boolean = false,
+    val subject: String? = null,
+    val popup: Boolean = false
+) : AnnotationSpec {
+    companion object {
+        val DEFAULT_NOTE_COLOR = PdfColor(1.0, 0.87, 0.0)
+    }
+}
+
+/**
+ * A reply to an existing annotation, linked with /IRT and /RT (§12.5.6.2,
+ * Table 172). [targetObjNum] is the object number of the annotation being
+ * replied to; the reply is written on [pageIndex], which must be the page the
+ * target is on. The reply copies the target's colour unless [color] is set.
+ */
+class ReplySpec(
+    override val pageIndex: Int,
+    val targetObjNum: Int,
+    val contents: String,
+    val title: String? = null,
+    val subject: String? = null,
+    val color: PdfColor? = null,
+    val replyType: ReplyType = ReplyType.REPLY
 ) : AnnotationSpec
+
+/**
+ * A review state change for an existing comment (§12.5.6.3): a hidden text
+ * annotation with /IRT, /State and /StateModel /Review. [targetObjNum] must be
+ * on [pageIndex] and names the original annotation the state applies to.
+ */
+class StatusSpec(
+    override val pageIndex: Int,
+    val targetObjNum: Int,
+    val status: CommentStatus,
+    val title: String? = null
+) : AnnotationSpec
+
+private const val POPUP_WIDTH = 216.0
+private const val POPUP_HEIGHT = 108.0
+private const val REPLY_SIZE = 20.0
+private val REPLY_FALLBACK_COLOR = PdfColor(1.0, 0.87, 0.0)
 
 /**
  * Builds the dictionaries and appearance streams for [AnnotationSpec]s
  * (§12.5.5 appearance streams, §12.5.6 subtypes). Streams are self-contained:
- * a highlight carries its own /ExtGState blend, an ink annotation its /BS, a
- * note its icon drawing, so any viewer can render them without guessing.
+ * a highlight carries its own /ExtGState blend, an underline a rule, an ink
+ * annotation its /BS, a note (and a reply) its icon drawing, so any viewer can
+ * render them without guessing. Popup windows carry no appearance stream
+ * (§12.5.6.14).
  */
 internal class AnnotationWriter(private val builder: PdfDocumentBuilder) {
 
-    private val date: PdfString by lazy { pdfDate() }
+    private val date: PdfString by lazy { PdfString(PdfDate.now().toByteArray(StandardCharsets.US_ASCII)) }
 
-    /** Adds one annotation; returns its reference, or null for an empty spec. */
-    fun build(spec: AnnotationSpec, pageRef: PdfRef): PdfRef? = when (spec) {
-        is HighlightSpec -> buildHighlight(spec, pageRef)
-        is InkSpec -> buildInk(spec, pageRef)
-        is NoteSpec -> buildNote(spec, pageRef)
+    /**
+     * Adds the annotation(s) for [spec] to page [pageRef]; returns their
+     * references in /Annots order — a comment and its popup, when it has one.
+     * [pageBox] is the page's crop box (used to place popups); [resolveAnnot]
+     * maps a source annotation object number to its reference in the output
+     * document, which replies and state changes need.
+     */
+    fun build(
+        spec: AnnotationSpec,
+        pageRef: PdfRef,
+        pageBox: PdfRect? = null,
+        resolveAnnot: (Int) -> PdfRef? = { null }
+    ): List<PdfRef> = when (spec) {
+        is HighlightSpec -> buildHighlight(spec, pageRef, pageBox)
+        is UnderlineSpec -> buildUnderline(spec, pageRef, pageBox)
+        is InkSpec -> listOfNotNull(buildInk(spec, pageRef))
+        is NoteSpec -> buildNote(spec, pageRef, pageBox)
+        is ReplySpec -> buildReply(spec, pageRef, resolveAnnot)
+        is StatusSpec -> buildStatus(spec, pageRef, resolveAnnot)
     }
 
-    private fun buildHighlight(spec: HighlightSpec, pageRef: PdfRef): PdfRef? {
+    private fun buildHighlight(spec: HighlightSpec, pageRef: PdfRef, pageBox: PdfRect?): List<PdfRef> {
         val rects = spec.rects.filter { !it.isEmpty }
-        val box = PdfRect.union(rects) ?: return null
-        val quad = ArrayList<PdfObject>(rects.size * 8)
-        for (r in rects) {
-            // Table 164 order: upper-left, upper-right, lower-left, lower-right.
-            quad += real(r.left); quad += real(r.top)
-            quad += real(r.right); quad += real(r.top)
-            quad += real(r.left); quad += real(r.bottom)
-            quad += real(r.right); quad += real(r.bottom)
-        }
+        val box = PdfRect.union(rects) ?: return emptyList()
         val w = box.width
         val h = box.height
         val content = buildString {
@@ -107,12 +179,36 @@ internal class AnnotationWriter(private val builder: PdfDocumentBuilder) {
         )
         val ap = form(listOf(0.0, 0.0, w, h), resources, content)
         val annot = LinkedHashMap<PdfName, PdfObject>()
-        common(annot, "Highlight", box, spec.contents, spec.title, pageRef)
+        common(annot, "Highlight", box, spec.contents, spec.title, pageRef, spec.subject, creation = true)
         annot[PdfName("C")] = colorArray(spec.color)
         annot[PdfName("CA")] = real(0.5)
-        annot[PdfName("QuadPoints")] = PdfArray(quad)
+        annot[PdfName("QuadPoints")] = PdfArray(quadPoints(rects))
         annot[PdfName("AP")] = dict("N" to ap)
-        return builder.add(PdfDict(annot))
+        return addMarkup(annot, box, pageRef, pageBox, spec.popup, spec.open)
+    }
+
+    private fun buildUnderline(spec: UnderlineSpec, pageRef: PdfRef, pageBox: PdfRect?): List<PdfRef> {
+        val rects = spec.rects.filter { !it.isEmpty }
+        val box = PdfRect.union(rects) ?: return emptyList()
+        // The rule sits on the lower edge of each rectangle (§12.5.6.10).
+        val content = buildString {
+            append("q ")
+            append(strokeRgb(spec.color))
+            append(' '); append(num(spec.width)); append(" w")
+            for (r in rects) {
+                val y = num(r.bottom - box.bottom)
+                append(' '); append(num(r.left - box.left)); append(' '); append(y); append(" m")
+                append(' '); append(num(r.right - box.left)); append(' '); append(y); append(" l")
+            }
+            append(" S Q")
+        }
+        val ap = form(listOf(0.0, 0.0, box.width, box.height), null, content)
+        val annot = LinkedHashMap<PdfName, PdfObject>()
+        common(annot, "Underline", box, spec.contents, spec.title, pageRef, spec.subject, creation = true)
+        annot[PdfName("C")] = colorArray(spec.color)
+        annot[PdfName("QuadPoints")] = PdfArray(quadPoints(rects))
+        annot[PdfName("AP")] = dict("N" to ap)
+        return addMarkup(annot, box, pageRef, pageBox, spec.popup, spec.open)
     }
 
     private fun buildInk(spec: InkSpec, pageRef: PdfRef): PdfRef? {
@@ -166,30 +262,174 @@ internal class AnnotationWriter(private val builder: PdfDocumentBuilder) {
         return builder.add(PdfDict(annot))
     }
 
-    private fun buildNote(spec: NoteSpec, pageRef: PdfRef): PdfRef? {
+    private fun buildNote(spec: NoteSpec, pageRef: PdfRef, pageBox: PdfRect?): List<PdfRef> {
         val box = if (spec.rect.isEmpty) PdfRect(spec.rect.left, spec.rect.bottom, spec.rect.left + 20.0, spec.rect.bottom + 20.0)
         else spec.rect
-        val w = box.width
-        val h = box.height
-        val fold = minOf(w, h) * 0.35
-        val content = buildString {
-            append("q ")
-            append(rgb(spec.color))
-            append(" 0 0 "); append(num(w)); append(' '); append(num(h)); append(" re f")
-            append(" 0 0 0 RG 0.75 w 0.375 0.375 "); append(num(w - 0.75)); append(' '); append(num(h - 0.75))
-            append(" re S")
-            append(" 0.75 w "); append(num(w - fold)); append(' '); append(num(h))
-            append(" m "); append(num(w - fold)); append(' '); append(num(h - fold))
-            append(" l "); append(num(w)); append(' '); append(num(h - fold)); append(" l S Q")
-        }
-        val ap = form(listOf(0.0, 0.0, w, h), null, content)
+        val ap = form(listOf(0.0, 0.0, box.width, box.height), null, noteIcon(box.width, box.height, spec.color))
         val annot = LinkedHashMap<PdfName, PdfObject>()
-        common(annot, "Text", box, spec.contents, spec.title, pageRef)
+        common(annot, "Text", box, spec.contents, spec.title, pageRef, spec.subject, creation = true)
         annot[PdfName("Name")] = PdfName("Note")
         annot[PdfName("C")] = colorArray(spec.color)
-        annot[PdfName("Open")] = com.pdfpaper.engine.model.PdfBoolean(spec.open)
+        annot[PdfName("Open")] = PdfBoolean(spec.open)
         annot[PdfName("AP")] = dict("N" to ap)
-        return builder.add(PdfDict(annot))
+        return addMarkup(annot, box, pageRef, pageBox, spec.popup, spec.open)
+    }
+
+    /**
+     * A reply is a text annotation over the upper-left corner of the target
+     * (§12.5.6.2). Its icon is drawn by [noteIcon]; viewers list it inside the
+     * target's thread rather than as a separate comment.
+     */
+    private fun buildReply(spec: ReplySpec, pageRef: PdfRef, resolveAnnot: (Int) -> PdfRef?): List<PdfRef> {
+        val target = resolveAnnot(spec.targetObjNum) ?: return emptyList()
+        val targetDict = builder.get(target.objNum) as? PdfDict
+        val box = replyBox(PdfRect.of(targetDict?.get("Rect") as? PdfArray))
+        val color = spec.color ?: annotColor(targetDict)
+        val ap = form(
+            listOf(0.0, 0.0, box.width, box.height),
+            null,
+            noteIcon(box.width, box.height, color ?: REPLY_FALLBACK_COLOR)
+        )
+        val annot = LinkedHashMap<PdfName, PdfObject>()
+        common(
+            annot, "Text", box, spec.contents, spec.title, pageRef, spec.subject, creation = true,
+            flags = PdfAnnotation.PRINT or PdfAnnotation.NO_ZOOM or PdfAnnotation.NO_ROTATE
+        )
+        annot[PdfName("Name")] = PdfName("Comment")
+        if (color != null) annot[PdfName("C")] = colorArray(color)
+        annot[PdfName("IRT")] = target
+        annot[PdfName("RT")] = PdfName(spec.replyType.pdfName)
+        annot[PdfName("AP")] = dict("N" to ap)
+        return listOf(builder.add(PdfDict(annot)))
+    }
+
+    /**
+     * A state change is a hidden text annotation replying to the comment
+     * (§12.5.6.3): /F keeps the Hidden, NoZoom and NoRotate bits that make
+     * Acrobat show the state in the comment list without drawing anything.
+     */
+    private fun buildStatus(spec: StatusSpec, pageRef: PdfRef, resolveAnnot: (Int) -> PdfRef?): List<PdfRef> {
+        val target = resolveAnnot(spec.targetObjNum) ?: return emptyList()
+        val targetDict = builder.get(target.objNum) as? PdfDict
+        val box = PdfRect.of(targetDict?.get("Rect") as? PdfArray) ?: PdfRect(0.0, 0.0, REPLY_SIZE, REPLY_SIZE)
+        val annot = LinkedHashMap<PdfName, PdfObject>()
+        common(
+            annot, "Text", box, null, spec.title, pageRef, creation = true,
+            flags = PdfAnnotation.HIDDEN or PdfAnnotation.PRINT or PdfAnnotation.NO_ZOOM or PdfAnnotation.NO_ROTATE
+        )
+        annot[PdfName("IRT")] = target
+        annot[PdfName("RT")] = PdfName("R")
+        annot[PdfName("State")] = textString(spec.status.stateText)
+        annot[PdfName("StateModel")] = PdfName("Review")
+        return listOf(builder.add(PdfDict(annot)))
+    }
+
+    /** /QuadPoints in Table 164 order: upper-left, upper-right, lower-left, lower-right. */
+    private fun quadPoints(rects: List<PdfRect>): ArrayList<PdfObject> {
+        val quad = ArrayList<PdfObject>(rects.size * 8)
+        for (r in rects) {
+            quad += real(r.left); quad += real(r.top)
+            quad += real(r.right); quad += real(r.top)
+            quad += real(r.left); quad += real(r.bottom)
+            quad += real(r.right); quad += real(r.bottom)
+        }
+        return quad
+    }
+
+    /**
+     * Stores a markup annotation plus, when asked, its popup window
+     * (§12.5.6.14). Returns /Annots references: the annotation, then the popup.
+     */
+    private fun addMarkup(
+        annot: LinkedHashMap<PdfName, PdfObject>,
+        box: PdfRect,
+        pageRef: PdfRef,
+        pageBox: PdfRect?,
+        popup: Boolean,
+        open: Boolean
+    ): List<PdfRef> {
+        val annotRef = PdfRef(builder.allocate(), 0)
+        val refs = ArrayList<PdfRef>(2)
+        refs += annotRef
+        if (popup) {
+            val popupRef = addPopup(annotRef, box, pageRef, pageBox, open)
+            annot[PdfName("Popup")] = popupRef
+            refs += popupRef
+        }
+        builder.put(annotRef.objNum, PdfDict(annot))
+        return refs
+    }
+
+    /** A popup window opening beside its parent (Table 182); no /AP. */
+    private fun addPopup(
+        parentRef: PdfRef,
+        parentBox: PdfRect,
+        pageRef: PdfRef,
+        pageBox: PdfRect?,
+        open: Boolean
+    ): PdfRef {
+        val box = popupBox(parentBox, pageBox)
+        val popup = LinkedHashMap<PdfName, PdfObject>()
+        popup[PdfName("Type")] = PdfName("Annot")
+        popup[PdfName("Subtype")] = PdfName("Popup")
+        popup[PdfName("Rect")] = PdfArray(listOf(real(box.left), real(box.bottom), real(box.right), real(box.top)))
+        popup[PdfName("Parent")] = parentRef
+        popup[PdfName("Open")] = PdfBoolean(open)
+        popup[PdfName("P")] = pageRef
+        return builder.add(PdfDict(popup))
+    }
+
+    /**
+     * Places the popup beside its parent, preferring the right side at the
+     * parent's bottom, and keeps it inside the page when the box is known.
+     */
+    private fun popupBox(parent: PdfRect, pageBox: PdfRect?): PdfRect {
+        val bounds = pageBox ?: PdfRect(0.0, 0.0, 612.0, 792.0)
+        var left = parent.right + 8.0
+        if (left + POPUP_WIDTH > bounds.right) left = parent.left - 8.0 - POPUP_WIDTH
+        if (left < bounds.left) left = bounds.left
+        var bottom = parent.bottom
+        if (bottom + POPUP_HEIGHT > bounds.top) bottom = bounds.top - POPUP_HEIGHT
+        if (bottom < bounds.bottom) bottom = bounds.bottom
+        return PdfRect(left, bottom, left + POPUP_WIDTH, bottom + POPUP_HEIGHT)
+    }
+
+    /** A reply's icon sits over the upper-left corner of the annotation it answers. */
+    private fun replyBox(target: PdfRect?): PdfRect {
+        val anchor = target ?: return PdfRect(0.0, 0.0, REPLY_SIZE, REPLY_SIZE)
+        return PdfRect(anchor.left, anchor.top - REPLY_SIZE, anchor.left + REPLY_SIZE, anchor.top)
+    }
+
+    /** The classic piece-of-paper note icon, drawn in the label's own box. */
+    private fun noteIcon(w: Double, h: Double, color: PdfColor): String = buildString {
+        val fold = minOf(w, h) * 0.35
+        append("q ")
+        append(rgb(color))
+        append(" 0 0 "); append(num(w)); append(' '); append(num(h)); append(" re f")
+        append(" 0 0 0 RG 0.75 w 0.375 0.375 "); append(num(w - 0.75)); append(' '); append(num(h - 0.75))
+        append(" re S")
+        append(" 0.75 w "); append(num(w - fold)); append(' '); append(num(h))
+        append(" m "); append(num(w - fold)); append(' '); append(num(h - fold))
+        append(" l "); append(num(w)); append(' '); append(num(h - fold)); append(" l S Q")
+    }
+
+    /** /C of an annotation dictionary already copied to the builder (§12.5.2). */
+    private fun annotColor(dict: PdfDict?): PdfColor? {
+        val values = (dict?.get("C") as? PdfArray)?.items ?: return null
+        val c = ArrayList<Double>(values.size)
+        for (value in values) {
+            val number = when (value) {
+                is PdfReal -> value.value
+                is PdfInteger -> value.value.toDouble()
+                else -> return null
+            }
+            c += number
+        }
+        return when (c.size) {
+            1 -> PdfColor(c[0], c[0], c[0])
+            3 -> PdfColor(c[0], c[1], c[2])
+            else -> null
+        }
     }
 
     /** Entries shared by every new annotation (§12.5.2, Table 164). */
@@ -199,18 +439,23 @@ internal class AnnotationWriter(private val builder: PdfDocumentBuilder) {
         box: PdfRect,
         contents: String?,
         title: String?,
-        pageRef: PdfRef
+        pageRef: PdfRef,
+        subject: String? = null,
+        creation: Boolean = false,
+        flags: Int = PdfAnnotation.PRINT
     ) {
         annot[PdfName("Type")] = PdfName("Annot")
         annot[PdfName("Subtype")] = PdfName(subtype)
         annot[PdfName("Rect")] = PdfArray(
             listOf(real(box.left), real(box.bottom), real(box.right), real(box.top))
         )
-        annot[PdfName("F")] = PdfInteger(PdfAnnotation.PRINT.toLong())
+        annot[PdfName("F")] = PdfInteger(flags.toLong())
         annot[PdfName("M")] = date
         annot[PdfName("P")] = pageRef
         if (contents != null) annot[PdfName("Contents")] = textString(contents)
         if (title != null) annot[PdfName("T")] = textString(title)
+        if (subject != null) annot[PdfName("Subj")] = textString(subject)
+        if (creation) annot[PdfName("CreationDate")] = date
     }
 
     /** A form XObject (§8.10) with the given /BBox and content, no /Matrix. */
@@ -252,14 +497,5 @@ internal class AnnotationWriter(private val builder: PdfDocumentBuilder) {
         out.write(0xFF)
         out.write(text.toByteArray(StandardCharsets.UTF_16BE))
         return PdfString(out.toByteArray())
-    }
-
-    private fun pdfDate(): PdfString {
-        val cal = Calendar.getInstance(TimeZone.getTimeZone("UTC"))
-        val s = "D:%04d%02d%02d%02d%02d%02dZ".format(
-            cal.get(Calendar.YEAR), cal.get(Calendar.MONTH) + 1, cal.get(Calendar.DAY_OF_MONTH),
-            cal.get(Calendar.HOUR_OF_DAY), cal.get(Calendar.MINUTE), cal.get(Calendar.SECOND)
-        )
-        return PdfString(s.toByteArray(StandardCharsets.US_ASCII))
     }
 }

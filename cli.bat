@@ -12,6 +12,7 @@ if /I "%~1"=="convert" goto convert
 if /I "%~1"=="create" goto createpdf
 if /I "%~1"=="images-to-pdf" goto createpdf
 if /I "%~1"=="text-to-pdf" goto createpdf
+if /I "%~1"=="comments" goto comments
 goto usage
 
 :fontinfo
@@ -31,6 +32,10 @@ exit /b %ERRORLEVEL%
 call "%~dp0gradlew.bat" -q :engine:create --args="%*"
 exit /b %ERRORLEVEL%
 
+:comments
+call "%~dp0gradlew.bat" -q :engine:comments --args="%*"
+exit /b %ERRORLEVEL%
+
 :usage
 echo Usage: cli fontinfo ^<file.pdf^> --page ^<n^> 1>&2
 echo        cli add-text^|add-image^|list-images^|move-image^|replace-image^|delete-image ... 1>&2
@@ -41,4 +46,5 @@ echo        cli convert pptx-to-pdf ^<in.pptx^> --out ^<out.pdf^> 1>&2
 echo        cli create blank --size A4 --out ^<out.pdf^> 1>&2
 echo        cli images-to-pdf ^<image^>... --out ^<out.pdf^> [--fit fit^|fill^|original] 1>&2
 echo        cli text-to-pdf ^<in.txt^> --out ^<out.pdf^> 1>&2
+echo        cli comments list^|add^|reply^|set-status ... 1>&2
 exit /b 2

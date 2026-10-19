@@ -72,6 +72,17 @@ tasks.register<JavaExec>("create") {
     workingDir = rootProject.projectDir
 }
 
+// T22: comment CLI. Usage:
+//   ./gradlew :engine:comments --args="comments list in.pdf"
+tasks.register<JavaExec>("comments") {
+    group = "verification"
+    description = "List, add, reply to and set the review status of PDF comments."
+    classpath = sourceSets["main"].runtimeClasspath
+    mainClass.set("com.pdfpaper.engine.tools.PdfCommentsCliKt")
+    // Paths on the command line are resolved from the repo root, not engine/.
+    workingDir = rootProject.projectDir
+}
+
 // T14: generates a scaled sibling corpus (the committed /testdata files are
 // tiny structural fixtures) and times each engine phase against it.
 tasks.register<JavaExec>("perfCheck") {

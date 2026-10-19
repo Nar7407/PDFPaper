@@ -3,6 +3,7 @@ package com.pdfpaper.engine.annot
 import com.pdfpaper.engine.geom.PdfRect
 import com.pdfpaper.engine.graphics.PdfColor
 import com.pdfpaper.engine.model.PdfArray
+import com.pdfpaper.engine.model.PdfBoolean
 import com.pdfpaper.engine.model.PdfDict
 import com.pdfpaper.engine.model.PdfDocument
 import com.pdfpaper.engine.model.PdfInteger
@@ -103,6 +104,26 @@ class PdfAnnotation(
     val appearance: PdfStream?,
     /** /AS appearance state (§12.5.5). */
     val appearanceState: String?,
+    /** /Subj — short subject of the markup annotation (§12.5.6.2, Table 172). */
+    val subject: String?,
+    /** /CreationDate — when the annotation was created (§12.5.6.2). */
+    val creationDate: String?,
+    /** /M — when the annotation was last modified (§12.5.2, Table 164). */
+    val modifiedDate: String?,
+    /** /IRT — the annotation this one replies to (§12.5.6.2, Table 172). */
+    val inReplyTo: PdfRef?,
+    /** /RT — reply relationship: "R" (a reply) or "Group" (§12.5.6.2). */
+    val replyType: String?,
+    /** /State — author-specific review state (§12.5.6.3, Table 170). */
+    val state: String?,
+    /** /StateModel — the state model [state] belongs to, normally "Review". */
+    val stateModel: String?,
+    /** /Popup — the popup window showing this annotation's text (§12.5.6.2). */
+    val popup: PdfRef?,
+    /** /Parent — field parent (widgets) or markup annotation (popups). */
+    val parent: PdfRef?,
+    /** /Open — notes and popups initially displayed open (§12.5.6.4, §12.5.6.14). */
+    val open: Boolean?,
     val dict: PdfDict,
     val ref: PdfRef?
 ) {
@@ -188,6 +209,16 @@ internal fun parseAnnotation(
         inkLists = inkLists(dict["InkList"] as? PdfArray),
         appearance = appearance,
         appearanceState = stateName,
+        subject = (dict["Subj"] as? PdfString)?.text(),
+        creationDate = (dict["CreationDate"] as? PdfString)?.text(),
+        modifiedDate = (dict["M"] as? PdfString)?.text(),
+        inReplyTo = dict["IRT"] as? PdfRef,
+        replyType = (dict["RT"] as? PdfName)?.name,
+        state = (dict["State"] as? PdfString)?.text(),
+        stateModel = (dict["StateModel"] as? PdfName)?.name,
+        popup = dict["Popup"] as? PdfRef,
+        parent = dict["Parent"] as? PdfRef,
+        open = (dict["Open"] as? PdfBoolean)?.value,
         dict = dict,
         ref = ref
     )

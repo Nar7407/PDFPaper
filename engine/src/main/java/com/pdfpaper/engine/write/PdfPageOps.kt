@@ -45,7 +45,7 @@ object PdfPageOps {
         document: PdfDocument,
         annotations: List<AnnotationSpec>,
         version: String = PdfWriter.DEFAULT_VERSION
-    ): Result<ByteArray> = edit(document, annotations, emptyMap(), version)
+    ): Result<ByteArray> = edit(document, annotations, emptyMap(), version = version)
 
     /**
      * Fills AcroForm fields, by fully-qualified name, and writes appearance
@@ -55,21 +55,26 @@ object PdfPageOps {
         document: PdfDocument,
         values: Map<String, String>,
         version: String = PdfWriter.DEFAULT_VERSION
-    ): Result<ByteArray> = edit(document, emptyList(), values, version)
+    ): Result<ByteArray> = edit(document, emptyList(), values, version = version)
 
     /**
-     * One save that both adds annotations and fills form fields (T12). Either
-     * list/map may be empty. The output is a fresh classic-xref file that keeps
-     * links, bookmarks and the rest of the AcroForm intact.
+     * One save that both adds annotations and fills form fields (T12), and can
+     * drop annotations (T22). Any list/map may be empty. [droppedAnnots] holds
+     * source object numbers of annotations to remove together with everything
+     * that refers to them (popups, replies, state changes); the output is a
+     * fresh classic-xref file that keeps links, bookmarks and the rest of the
+     * AcroForm intact.
      */
     fun edit(
         document: PdfDocument,
         annotations: List<AnnotationSpec> = emptyList(),
         formValues: Map<String, String> = emptyMap(),
+        droppedAnnots: Set<Int> = emptySet(),
         version: String = PdfWriter.DEFAULT_VERSION
     ): Result<ByteArray> = runCatching {
         val selections = document.pages().indices.map { PdfPageSelection(document, it) }
-        PdfDocumentAssembler(selections, document, version, annotations, formValues).assemble()
+        PdfDocumentAssembler(selections, document, version, annotations, formValues, emptyList(), droppedAnnots)
+            .assemble()
     }
 
     /** Adds [degrees] clockwise rotation to each page in [pages] (§14.11.2). */

@@ -11,6 +11,7 @@ usage() {
     echo "       cli create blank --size A4 --out <out.pdf>" >&2
     echo "       cli images-to-pdf <image>... --out <out.pdf> [--fit fit|fill|original]" >&2
     echo "       cli text-to-pdf <in.txt> --out <out.pdf>" >&2
+    echo "       cli comments list|add|reply|set-status ..." >&2
     exit 2
 }
 
@@ -35,6 +36,9 @@ case "$1" in
         ;;
     create|images-to-pdf|text-to-pdf)
         exec "$root/gradlew" -q :engine:create --args="$*"
+        ;;
+    comments)
+        exec "$root/gradlew" -q :engine:comments --args="$*"
         ;;
     *)
         usage

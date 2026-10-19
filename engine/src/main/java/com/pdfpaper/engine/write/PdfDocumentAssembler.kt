@@ -6,6 +6,7 @@ import com.pdfpaper.engine.edit.PageEdit
 import com.pdfpaper.engine.edit.PageEditApplier
 import com.pdfpaper.engine.edit.TextEditReport
 import com.pdfpaper.engine.form.FormFiller
+import com.pdfpaper.engine.geom.PdfRect
 import com.pdfpaper.engine.model.PdfArray
 import com.pdfpaper.engine.model.PdfDict
 import com.pdfpaper.engine.model.PdfDocument
@@ -69,7 +70,13 @@ internal class PdfDocumentAssembler(
     /** AcroForm field values to write, by fully-qualified name (T12). */
     private val formValues: Map<String, String> = emptyMap(),
     /** Page edits to apply while copying the primary document's pages (T17). */
-    private val edits: List<PageEdit> = emptyList()
+    private val edits: List<PageEdit> = emptyList(),
+    /**
+     * Source object numbers of primary-document annotations to remove (T22).
+     * Any reference to them from a kept annotation copies as "dropped", so a
+     * reply never survives its comment.
+     */
+    private val droppedAnnots: Set<Int> = emptySet()
 ) {
 
     private val builder = PdfDocumentBuilder(version)
@@ -121,6 +128,12 @@ internal class PdfDocumentAssembler(
                     copier.mapKnown(page.objNum, null)
                 }
             }
+        }
+        // Dropped annotations (T22) must not come back through a /Popup, /IRT
+        // or /Parent reference from a kept annotation.
+        if (droppedAnnots.isNotEmpty()) {
+            val copier = copierFor(primary)
+            for (num in droppedAnnots) copier.mapKnown(num, null)
         }
 
         // 2. Named destinations must be known before pages are copied, because
@@ -184,9 +197,12 @@ internal class PdfDocumentAssembler(
             materialise(entries, copier, "Resources", src["Resources"] ?: page.resources)
         }
 
-        val existingAnnots = src["Annots"]?.let { copyAnnots(copier, it) }
+        val existingAnnots = src["Annots"]?.let { copyAnnots(copier, it, doc === primary) }
         val extras = if (doc === primary) additionsByPage[selection.pageIndex] else null
-        val added = extras?.mapNotNull { annotationWriter.build(it, ref) }.orEmpty()
+        val pageBox = PdfRect.of(page.cropBox)
+        val added = extras?.flatMap {
+            annotationWriter.build(it, ref, pageBox) { num -> copier.copiedRef(num) }
+        }.orEmpty()
         val annots = when {
             added.isEmpty() -> existingAnnots
             existingAnnots == null -> PdfArray(added)
@@ -220,22 +236,30 @@ internal class PdfDocumentAssembler(
 
     // -- Annotations and destinations ----------------------------------------
 
-    private fun copyAnnots(copier: PdfObjectCopier, annotsObj: PdfObject): PdfArray? {
+    private fun copyAnnots(copier: PdfObjectCopier, annotsObj: PdfObject, drops: Boolean): PdfArray? {
         val array = copier.resolve(annotsObj) as? PdfArray
             ?: return copier.copyValue(annotsObj) as? PdfArray
         val out = ArrayList<PdfObject>()
         for (item in array.items) {
+            val sourceNum = (item as? PdfRef)?.objNum
+            if (drops && sourceNum != null && sourceNum in droppedAnnots) continue
             // A widget's /Parent would otherwise drag the whole AcroForm tree in
             // from here; the form is imported explicitly later and reuses these
-            // same objects through the copier's memo.
+            // same objects through the copier's memo. Every other annotation
+            // keeps /Parent: a popup's /Parent is its markup annotation
+            // (§12.5.6.14).
+            val skip = if (annotSubtype(copier, item) == "Widget") setOf("Parent") else emptySet()
             val copied: PdfObject = when (item) {
-                is PdfRef -> copier.copyIndirect(item.objNum, setOf("Parent"))
-                else -> copier.copyValue(item, setOf("Parent"))
+                is PdfRef -> copier.copyIndirect(item.objNum, skip)
+                else -> copier.copyValue(item, skip)
             } ?: continue
             if (keepAnnot(copied)) out += copied
         }
         return if (out.isEmpty()) null else PdfArray(out)
     }
+
+    private fun annotSubtype(copier: PdfObjectCopier, item: PdfObject): String? =
+        ((copier.resolve(item) as? PdfDict)?.get("Subtype") as? PdfName)?.name
 
     /** A link with no reachable destination is dropped; other annots always stay. */
     private fun keepAnnot(copied: PdfObject): Boolean {
