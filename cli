@@ -6,6 +6,7 @@ usage() {
     echo "       cli add-text|add-image|list-images|move-image|replace-image|delete-image ..." >&2
     echo "       cli convert pdf-to-pptx <in.pdf> --out <out.pptx> [--fidelity]" >&2
     echo "       cli convert pdf-to-docx <in.pdf> --out <out.docx> [--mode flow|exact]" >&2
+    echo "       cli convert docx-to-pdf <in.docx> --out <out.pdf>" >&2
     exit 2
 }
 

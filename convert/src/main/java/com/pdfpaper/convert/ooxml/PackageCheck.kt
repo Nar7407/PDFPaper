@@ -76,7 +76,7 @@ internal object PackageCheck {
                 if (relationship.localName != "Relationship") continue
                 if (relationship.getAttribute("TargetMode") == "External") continue
                 val target = relationship.getAttribute("Target")
-                if (!parts.containsKey(resolve(baseDir, target))) {
+                if (!parts.containsKey(resolveTarget(baseDir, target))) {
                     problems += "$name references missing part '$target'"
                 }
             }
@@ -111,7 +111,8 @@ internal object PackageCheck {
         return if (index >= 0) relsName.substring(0, index) else ""
     }
 
-    private fun resolve(baseDir: String, target: String): String {
+    /** Resolves a relationship target against the part that holds the rels. */
+    fun resolveTarget(baseDir: String, target: String): String {
         val combined = if (baseDir.isEmpty()) target else "$baseDir/$target"
         val out = ArrayList<String>()
         for (segment in combined.split('/')) {

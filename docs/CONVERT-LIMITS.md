@@ -7,11 +7,13 @@ no third-party Office or PDF library: OOXML is a ZIP package
 ```sh
 ./cli convert pdf-to-pptx <in.pdf> --out <out.pptx> [--fidelity]
 ./cli convert pdf-to-docx <in.pdf> --out <out.docx> [--mode flow|exact]
+./cli convert docx-to-pdf <in.docx> --out <out.pdf>
 ```
 
 Every conversion writes a loss report next to the output
 (`<out>.<ext>.report.txt`) and the machine-readable part of it is also returned
-by the API (`PdfToDocxResult.report`, `PdfToPptxResult.report`).
+by the API (`PdfToDocxResult.report`, `PdfToPptxResult.report`,
+`DocxToPdfResult.report`).
 
 Verification used for the tables below:
 
@@ -22,6 +24,9 @@ Verification used for the tables below:
   independent `PptxValidator`/`DocxValidator` (content types, XML
   well-formedness, relationship targets, `r:id` resolution, section/numbering
   references).
+* `./gradlew :convert:docxToPdfCorpusCheck` — converts every DOCX the corpus
+  check produced back to PDF and reads each result back with the engine, so the
+  table below covers `testdata` documents and not only the fixtures.
 * `convert/tools/pptx_check.py` and `convert/tools/docx_check.py` — dev-only
   helpers (not build dependencies) that open the outputs with `python-pptx` /
   `python-docx`, i.e. with a third-party reader rather than our own validator.
@@ -84,7 +89,70 @@ certificates), and flow mode when the text matters more than the layout.
 
 ## DOCX → PDF
 
-Not implemented yet (T19).
+```sh
+./cli convert docx-to-pdf <in.docx> --out <out.pdf>
+```
+
+The package parts are read with `java.util.zip` and the DOM, laid out by
+`WordLayout` and written as PDF by hand. Text is drawn with the PDF **standard
+14** fonts (`Times`, `Helvetica`, `Courier` and their bold/italic variants)
+with `/WinAnsiEncoding` and explicit `/Widths`, so nothing is embedded and any
+viewer can render the file. The widths come from the standard Adobe metrics
+(`convert/tools/make_standard_widths.py`, a dev-only script, generated
+`pdf/StandardWidths.kt`). Pictures are either embedded as JPEG
+(`/DCTDecode` bytes verbatim) or, for PNG, decoded by our own reader
+(`raster/PngReader`, colour types 0/2/3/4/6, bit depths 1–16, `tRNS`, all five
+filters, CRC checked) and re-deflated as `DeviceRGB`/`DeviceGray` with an
+`/SMask` for transparency.
+
+### Well converted
+
+| Document | Why |
+| --- | --- |
+| Body paragraphs | Text is drawn run by run at the position the layout computed; spaces are preserved, tabs jump to the default tab stop (`w:defaultTabStop` from `settings.xml`, else 0.5 in). |
+| Left, centre, right and justified alignment | Justified lines are stretched to the text area by giving every space a share of the slack: the layout positions each run, and a run that contains several spaces gets a `TJ` adjustment between them. The last line of a paragraph is not stretched. |
+| Paragraph and character styles | `styles.xml` is resolved the way Word does it: docDefaults, then the style's `basedOn` chain, then direct formatting on the paragraph and the runs. Theme fonts (`w:asciiTheme="majorHAnsi"` and friends, which is how most real documents name their fonts) are filled in from the package's `*/theme/theme1.xml` `a:fontScheme`. |
+| Bold, italic, underline, strikethrough, size, colour | Drawn with the matching standard font variant; colour as `/DeviceRGB`. Underline and strike are thin rectangles under/over the run. |
+| All caps, superscript, subscript, character spacing (`w:spacing`) | `w:allCaps` upper-cases; superscript raises the baseline by 0.33 em, subscript lowers it by 0.14 em (the engine reads the `Tc` correctly); character spacing becomes a `Tc` in points. |
+| Indents and vertical spacing | `w:ind` (left, right, first line, hanging) and `w:spacing` before/after are converted from twips to points; `w:line` is honoured as a multiple, an exact height or "at least". |
+| Lists | Levels come from `numbering.xml`: `bullet` (the `Symbol`/`Wingdings`/`Courier` private-use glyphs are mapped to `•`, `▪`, `o`), `decimal`, `lowerLetter`, `upperLetter`, `lowerRoman`, `upperRoman` and other decimal styles; `w:lvlText` with its `%n` references, `w:start` and `w:startOverride`; a nine-level counter stack keeps nested lists counting. |
+| Page setup and sections | `w:pgSz` (including landscape) and `w:pgMar` become the PDF page box and margins; every `w:sectPr` starts a new page, so mixed portrait/landscape documents keep their page sizes. |
+| Explicit page breaks | `w:br w:type="page"` and `w:pageBreakBefore` start a new page. |
+| Tables | `w:tblGrid` column widths, `w:tblInd`, `w:tblCellMar`, cell shading (`w:shd`), horizontal merges (`w:gridSpan`), `w:trHeight` and borders when the source states them (directly or through the table style chain, `basedOn` included). A row that does not fit in the text area starts the next page; nested tables are laid out in their cell. |
+| Pictures | JPEG data is embedded verbatim as `/DCTDecode`; PNG is decoded and re-deflated (see above). An inline picture sits on the baseline in the line; an anchored one is placed on the page from `wp:posOffset` or `wp:align` (behind or in front of the text), and pictures inside table cells are placed there. |
+| PDF metadata | `/Title` comes from `docProps/core.xml` (UTF-16BE when it is not plain ASCII), `/Producer` and `/Creator` name the converter, and the content streams are deflated. |
+
+### Partly converted (opens, looks close, details differ)
+
+| Document | What changes |
+| --- | --- |
+| Any font outside the standard 14 (Calibri, Cambria, Arial, …) | Replaced by a standard font of the same shape (Calibri→Helvetica, Cambria→Times, Courier New→Courier, and their bold/italic variants); the metrics of the substitute are used, so line breaks can move. **Every substitute is named in the report** — on real documents this is normal, not a defect. |
+| Characters WinAnsi has no code for (CJK, Greek, maths, emoji, …) | Drawn as `?` and reported once per document. |
+| Small caps | Drawn as lower case, reported (there is no small-caps flag in the standard 14 fonts). |
+| Fields (`PAGE`, `NUMPAGES`, `DATE`, `TOC`…) | The text Word last saved for them is drawn. A field that was never updated shows its cached value; the report says so. |
+| Hyperlinks | The text is drawn, the clickable annotation is not created; reported. |
+| Multi-column sections | Laid out as one column; reported. |
+| Vertically merged cells | Drawn as ordinary separate cells; reported. |
+| A column break | Treated as a page break; reported. |
+| Table borders | A table that asks for borders gets a full grid in one thin grey line: the per-edge widths, colours and `nil` edges are not reproduced. |
+| Tab stops | Only the default tab stop is used; explicit `w:tabs` positions and alignment are ignored (the text is correct, the columns inside a paragraph may not line up). |
+| Multi-line cells and rows that are taller than a page | A row is never split, and a row taller than the text area overflows the bottom margin instead of continuing on the next page. |
+| Floating pictures | Anchored pictures are placed at their offsets, but text does not wrap around them (reported). A picture anchored `behindDoc="1"` is drawn behind the text. |
+| Grouped drawings / a drawing with several pictures | Only the first picture is converted; reported. |
+
+### Badly converted (the result opens but the page is not what it was)
+
+| Document | Why |
+| --- | --- |
+| Headers and footers (including page numbers) | Not converted at all — a PDF has no page areas; reported. |
+| Footnotes, endnotes and their references | Dropped; reported. |
+| Text boxes, WordArt, charts, SmartArt, equations, embedded objects | Not converted: the text inside them is not read and the graphics are skipped; drawings without a picture are reported. |
+| Legacy VML pictures (`w:pict`) | Dropped; reported. |
+| BMP, GIF, TIFF, EMF, WMF and SVG pictures | Skipped and named in the report (only PNG and JPEG are converted). An interlaced PNG is skipped as well. |
+| Tracked changes | Insertions are drawn (the `w:ins` wrapper is transparent), deletions are dropped; reported. What the reviewer wanted is not what the reader sees. |
+| RTL and other bidi text (`w:bidi`, `w:rtl`) | Drawn left-to-right in logical order, without reordering or shaping: Arabic/Hebrew text comes out reversed. |
+| Rotated text (`w:textDirection`, vertical labels) | Drawn horizontally; a transform would need the text to be reshaped. |
+| Documents that rely on exact typography (contracts, invoices with ruled lines drawn as table borders in colour, forms) | The text and the layout survive, the font and the rule styling do not; Word and the PDF will differ where they use different fonts. |
 
 ## PPTX → PDF
 

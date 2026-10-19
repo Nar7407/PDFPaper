@@ -70,3 +70,22 @@ tasks.register<JavaExec>("docxCorpusCheck") {
     inputs.dir(rootProject.file("testdata"))
     outputs.file(docxCorpusReport)
 }
+
+val docxToPdfCorpusReport = layout.buildDirectory.file("docx-pdf-corpus-report.txt")
+
+// Acceptance harness: converts every DOCX the T18 corpus check produced back to
+// PDF and reads each result with the engine, writing
+// convert/build/docx-pdf-corpus-report.txt.
+tasks.register<JavaExec>("docxToPdfCorpusCheck") {
+    group = "verification"
+    description = "Converts every corpus DOCX to PDF and reads the PDFs back."
+    classpath = sourceSets["main"].runtimeClasspath
+    mainClass.set("com.pdfpaper.convert.tools.DocxToPdfCorpusCheckKt")
+    args(
+        layout.buildDirectory.dir("docx-corpus").get().asFile.absolutePath,
+        layout.buildDirectory.dir("docx-pdf-corpus").get().asFile.absolutePath,
+        docxToPdfCorpusReport.get().asFile.absolutePath
+    )
+    dependsOn("docxCorpusCheck")
+    outputs.file(docxToPdfCorpusReport)
+}

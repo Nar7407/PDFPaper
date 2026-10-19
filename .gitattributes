@@ -3,3 +3,6 @@
 *.jar binary
 *.bin binary
 *.ttf binary
+# OOXML packages are ZIPs: never let git touch their line endings.
+*.docx binary
+*.pptx binary

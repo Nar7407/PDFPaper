@@ -2,7 +2,6 @@ package com.pdfpaper.convert.raster
 
 import java.io.ByteArrayOutputStream
 import java.util.zip.CRC32
-import java.util.zip.Deflater
 
 /**
  * Minimal PNG encoder (RFC 2083) written by hand.
@@ -63,26 +62,9 @@ object PngWriter {
         header.write(0) // filter method: adaptive
         header.write(0) // interlace: none
         chunk(out, "IHDR", header.toByteArray())
-        chunk(out, "IDAT", deflate(raw))
+        chunk(out, "IDAT", Zlib.encode(raw))
         chunk(out, "IEND", ByteArray(0))
         return out.toByteArray()
-    }
-
-    private fun deflate(raw: ByteArray): ByteArray {
-        val deflater = Deflater(Deflater.BEST_COMPRESSION, false) // zlib wrapper
-        try {
-            deflater.setInput(raw)
-            deflater.finish()
-            val out = ByteArrayOutputStream(raw.size / 3 + 64)
-            val buffer = ByteArray(1 shl 16)
-            while (!deflater.finished()) {
-                val n = deflater.deflate(buffer)
-                if (n > 0) out.write(buffer, 0, n)
-            }
-            return out.toByteArray()
-        } finally {
-            deflater.end()
-        }
     }
 
     private fun chunk(out: ByteArrayOutputStream, type: String, data: ByteArray) {
