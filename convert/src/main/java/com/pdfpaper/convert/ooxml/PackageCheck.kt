@@ -88,8 +88,12 @@ internal object PackageCheck {
     fun parse(bytes: ByteArray): Document? = try {
         val factory = DocumentBuilderFactory.newInstance()
         factory.isNamespaceAware = true
-        factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true)
-        factory.isExpandEntityReferences = false
+        // Not every parser knows these two (Android's, for one), and an
+        // unsupported feature must not turn a valid part into a parse failure.
+        runCatching { factory.isExpandEntityReferences = false }
+        runCatching {
+            factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true)
+        }
         factory.newDocumentBuilder().parse(ByteArrayInputStream(bytes))
     } catch (t: Throwable) {
         null

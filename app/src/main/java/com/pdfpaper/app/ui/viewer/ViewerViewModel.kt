@@ -773,6 +773,26 @@ class ViewerViewModel(application: Application) : AndroidViewModel(application) 
         _export.value = null
     }
 
+    /**
+     * Saves the PDF that is open right now (the banner's "Save as PDF"): reads
+     * the cached file back and parks it in [export] for the same SAF flow the
+     * annotation export uses.
+     */
+    fun saveConvertedPdf(suggestedName: String) {
+        val path = currentPath
+        if (path.isBlank()) return
+        viewModelScope.launch {
+            val bytes = runCatching {
+                withContext(Dispatchers.IO) { File(path).readBytes() }
+            }.getOrNull()
+            if (bytes == null) {
+                _message.value = "The converted PDF is no longer in the cache; open the document again"
+            } else {
+                _export.value = ViewerExport(bytes, suggestedName)
+            }
+        }
+    }
+
     /** Maps a fractional page point to PDF user space through the render plan. */
     private fun toUserSpace(pageIndex: Int, fractionX: Float, fractionY: Float): DoubleArray? {
         val plan = _plans.value[pageIndex] ?: return null

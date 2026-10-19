@@ -3,6 +3,8 @@
 *.jar binary
 *.bin binary
 *.ttf binary
-# OOXML packages are ZIPs: never let git touch their line endings.
+# OOXML packages are ZIPs and legacy .doc is an OLE container: never let git
+# touch their line endings.
 *.docx binary
 *.pptx binary
+*.doc binary

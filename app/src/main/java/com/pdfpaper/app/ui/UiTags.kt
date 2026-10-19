@@ -17,6 +17,13 @@ object UiTags {
     const val TOOL_DETAIL_TITLE = "tool_detail_title"
     const val RECENT_LIST = "recent_list"
 
+    const val OPEN_SCREEN = "screen_open"
+    const val OPEN_ERROR = "open_error"
+
+    const val OFFICE_BANNER = "office_view_banner"
+    const val OFFICE_BANNER_DISMISS = "office_banner_dismiss"
+    const val OFFICE_BANNER_MISSING = "office_banner_missing"
+
     const val EDIT_TOOLBAR = "edit_toolbar"
     const val EDIT_SELECT = "edit_select"
     const val EDIT_ADD_TEXT = "edit_add_text"

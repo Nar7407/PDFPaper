@@ -19,10 +19,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.filled.List
-import androidx.compose.material.icons.filled.Info
-import androidx.compose.material3.Card
 import androidx.compose.material3.Icon
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -40,7 +37,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.pdfpaper.app.data.CachedPdf
 import com.pdfpaper.app.data.RecentCodec
 import com.pdfpaper.app.data.RecentFile
 import com.pdfpaper.app.ui.UiTags
@@ -48,24 +44,23 @@ import com.pdfpaper.app.ui.theme.PDFPaperTheme
 
 @Composable
 fun RecentScreen(
-    onOpenViewer: (CachedPdf) -> Unit,
+    onOpenDocument: (RecentFile) -> Unit,
     viewModel: RecentViewModel = viewModel()
 ) {
     val state by viewModel.state.collectAsState()
 
     LaunchedEffect(Unit) { viewModel.refresh() }
-    LaunchedEffect(state.pendingNavigation) {
-        state.pendingNavigation?.let {
-            onOpenViewer(it)
-            viewModel.onNavigationConsumed()
+    LaunchedEffect(state.pendingOpen) {
+        state.pendingOpen?.let {
+            onOpenDocument(it)
+            viewModel.onOpenConsumed()
         }
     }
 
     RecentContent(
         state = state,
         onOpen = viewModel::open,
-        onClear = viewModel::clear,
-        onDismissError = viewModel::dismissError
+        onClear = viewModel::clear
     )
 }
 
@@ -73,8 +68,7 @@ fun RecentScreen(
 private fun RecentContent(
     state: RecentUiState,
     onOpen: (RecentFile) -> Unit,
-    onClear: () -> Unit,
-    onDismissError: () -> Unit
+    onClear: () -> Unit
 ) {
     Surface(
         color = MaterialTheme.colorScheme.background,
@@ -108,40 +102,17 @@ private fun RecentContent(
                     TextButton(onClick = onClear) { Text("Clear") }
                 }
             }
-            if (state.loading) {
-                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-            }
             Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
-                when {
-                    state.items.isEmpty() -> EmptyRecent()
-                    else -> LazyColumn(
+                if (state.items.isEmpty()) {
+                    EmptyRecent()
+                } else {
+                    LazyColumn(
                         modifier = Modifier.fillMaxSize().testTag(UiTags.RECENT_LIST),
                         contentPadding = PaddingValues(16.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         items(state.items, key = { it.uri }) { recent ->
                             RecentRow(recent = recent, onClick = { onOpen(recent) })
-                        }
-                    }
-                }
-                state.error?.let { error ->
-                    Card(
-                        modifier = Modifier
-                            .align(Alignment.BottomCenter)
-                            .fillMaxWidth()
-                            .padding(16.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(Icons.Filled.Info, contentDescription = null)
-                            Text(
-                                text = error,
-                                style = MaterialTheme.typography.bodySmall,
-                                modifier = Modifier.weight(1f).padding(start = 10.dp)
-                            )
-                            TextButton(onClick = onDismissError) { Text("Dismiss") }
                         }
                     }
                 }
@@ -184,7 +155,7 @@ private fun RecentRow(recent: RecentFile, onClick: () -> Unit) {
                     overflow = TextOverflow.Ellipsis
                 )
                 Text(
-                    text = recent.uri,
+                    text = "${recent.kindLabel} - ${recent.uri}",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
@@ -228,7 +199,7 @@ private fun EmptyRecent() {
                 style = MaterialTheme.typography.titleMedium
             )
             Text(
-                text = "Open a PDF from Home or a tool and it will appear here.",
+                text = "Open a PDF, Word or PowerPoint document from Home and it will appear here.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -244,12 +215,20 @@ private fun RecentScreenLightPreview() {
             state = RecentUiState(
                 items = listOf(
                     RecentFile("content://demo/report.pdf", "Quarterly report.pdf"),
-                    RecentFile("content://demo/notes.pdf", "Meeting notes.pdf")
+                    RecentFile(
+                        "content://demo/notes.docx",
+                        "Meeting notes.docx",
+                        RecentFile.KIND_DOCX
+                    ),
+                    RecentFile(
+                        "content://demo/deck.pptx",
+                        "Kickoff deck.pptx",
+                        RecentFile.KIND_PPTX
+                    )
                 )
             ),
             onOpen = {},
-            onClear = {},
-            onDismissError = {}
+            onClear = {}
         )
     }
 }

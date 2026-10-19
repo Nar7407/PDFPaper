@@ -21,7 +21,6 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material3.Button
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedCard
@@ -96,7 +95,7 @@ private fun HomeContent(
             )
 
             Spacer(Modifier.height(24.dp))
-            OpenDocumentCard(loading = state.isLoading, onOpen = onOpen)
+            OpenDocumentCard(onOpen = onOpen)
 
             Spacer(Modifier.height(20.dp))
             Row(
@@ -179,14 +178,6 @@ private fun HomeContent(
                 }
             }
 
-            if (state.isLoading) {
-                Spacer(Modifier.height(20.dp))
-                CircularProgressIndicator(modifier = Modifier.align(Alignment.CenterHorizontally))
-            }
-            state.error?.let { error ->
-                Spacer(Modifier.height(16.dp))
-                MessageCard(text = error, onDismiss = onDismissMessages)
-            }
             state.message?.let { message ->
                 Spacer(Modifier.height(16.dp))
                 MessageCard(text = message, onDismiss = onDismissMessages)
@@ -197,7 +188,7 @@ private fun HomeContent(
 }
 
 @Composable
-private fun OpenDocumentCard(loading: Boolean, onOpen: () -> Unit) {
+private fun OpenDocumentCard(onOpen: () -> Unit) {
     OutlinedCard(
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
         modifier = Modifier.fillMaxWidth()
@@ -220,12 +211,12 @@ private fun OpenDocumentCard(loading: Boolean, onOpen: () -> Unit) {
                 }
                 Column(modifier = Modifier.padding(start = 16.dp)) {
                     Text(
-                        text = "Open a PDF",
+                        text = "Open a document",
                         style = MaterialTheme.typography.titleLarge,
                         fontWeight = FontWeight.SemiBold
                     )
                     Text(
-                        text = "View, organize, annotate or fill a document.",
+                        text = "PDF, Word (.docx) or PowerPoint (.pptx).",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -234,11 +225,10 @@ private fun OpenDocumentCard(loading: Boolean, onOpen: () -> Unit) {
             Spacer(Modifier.height(18.dp))
             Button(
                 onClick = onOpen,
-                enabled = !loading,
                 shape = RoundedCornerShape(8.dp),
                 modifier = Modifier.fillMaxWidth().height(48.dp)
             ) {
-                Text("Choose PDF")
+                Text("Choose file")
             }
         }
     }

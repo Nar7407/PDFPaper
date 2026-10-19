@@ -19,8 +19,26 @@ fun queryDisplayName(context: Context, uri: Uri): String? {
     return null
 }
 
-/** Copies a SAF document into the app cache, ready for the engine's file API. */
-suspend fun cachePdfFromUri(
+/**
+ * Makes the provider's read grant survive the activity, when the provider
+ * allows it. Best-effort: a URI opened through ACTION_VIEW carries a transient
+ * grant only, and asking for persistence there is not an error.
+ */
+fun rememberUriPermission(context: Context, uri: Uri) {
+    runCatching {
+        context.contentResolver.takePersistableUriPermission(
+            uri,
+            Intent.FLAG_GRANT_READ_URI_PERMISSION
+        )
+    }
+}
+
+/**
+ * Copies a picked document into the app cache, whatever its format. The open
+ * flow looks at the bytes afterwards, so no name or MIME type has to be
+ * trusted here.
+ */
+suspend fun cacheDocumentFromUri(
     context: Context,
     uri: Uri,
     fallbackName: String? = null
@@ -39,15 +57,11 @@ suspend fun cachePdfFromUri(
 suspend fun cachePdfAndRemember(
     context: Context,
     uri: Uri,
-    fallbackName: String? = null
+    fallbackName: String? = null,
+    kind: String = RecentFile.KIND_PDF
 ): CachedPdf {
-    val cached = cachePdfFromUri(context, uri, fallbackName)
-    runCatching {
-        context.contentResolver.takePersistableUriPermission(
-            uri,
-            Intent.FLAG_GRANT_READ_URI_PERMISSION
-        )
-    }
-    RecentStore(context).add(uri.toString(), cached.displayName)
+    val cached = cacheDocumentFromUri(context, uri, fallbackName)
+    rememberUriPermission(context, uri)
+    RecentStore(context).add(uri.toString(), cached.displayName, kind)
     return cached
 }

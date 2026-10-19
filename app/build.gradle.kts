@@ -98,6 +98,10 @@ dependencies {
     // viewer can parse documents and build display lists in-process.
     implementation(project(":engine"))
 
+    // Pure-Kotlin office converters (no Android dependencies); added with the
+    // open-office-files flow so .docx/.pptx can be turned into a PDF on device.
+    implementation(project(":convert"))
+
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
 

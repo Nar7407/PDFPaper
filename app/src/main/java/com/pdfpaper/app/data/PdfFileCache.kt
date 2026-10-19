@@ -51,7 +51,7 @@ fun copyPdfToCache(source: InputStream, displayName: String?, cacheDir: File): C
     return CachedPdf(target, safeName, target.length())
 }
 
-private fun uniqueFile(dir: File, name: String): File {
+internal fun uniqueFile(dir: File, name: String): File {
     var candidate = File(dir, name)
     if (!candidate.exists()) return candidate
     val base = name.substringBeforeLast('.', name)

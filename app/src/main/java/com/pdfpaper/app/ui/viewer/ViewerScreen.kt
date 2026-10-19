@@ -123,6 +123,7 @@ import com.pdfpaper.app.edit.EditableObject
 import com.pdfpaper.app.edit.EditableObjectType
 import com.pdfpaper.app.edit.EditableStyle
 import com.pdfpaper.app.edit.EditingRuntime
+import com.pdfpaper.app.office.OfficeCache
 import com.pdfpaper.app.ui.PasswordDialog
 import com.pdfpaper.app.ui.UiTags
 import com.pdfpaper.app.ui.theme.PDFPaperTheme
@@ -204,6 +205,11 @@ fun ViewerScreen(
     val context = LocalContext.current
     val demoEngine = EditingRuntime.isDemo(context)
     val activeToolName = activeToolId?.let { ToolRegistry.byId(it)?.name }
+
+    // A PDF produced from a .docx/.pptx carries a sidecar with the conversion
+    // notes; its presence is what turns the simplified-view banner on.
+    val converted = remember(path) { OfficeCache.read(path) }
+    var bannerDismissed by rememberSaveable(path) { mutableStateOf(false) }
 
     val imagePicker = rememberLauncherForActivityResult(
         ActivityResultContracts.GetContent()
@@ -352,6 +358,17 @@ fun ViewerScreen(
                 onRedo = viewModel::redoAny,
                 onMore = { showTools = true }
             )
+
+            if (converted != null && !bannerDismissed && !edit.active) {
+                SimplifiedViewBanner(
+                    warnings = converted.warnings,
+                    onSaveAsPdf = { viewModel.saveConvertedPdf(converted.pdfName) },
+                    onOpenInAnotherApp = {
+                        openPdfInAnotherApp(context, path, converted.sourceName)
+                    },
+                    onDismiss = { bannerDismissed = true }
+                )
+            }
 
             if (edit.active) {
                 EditBar(

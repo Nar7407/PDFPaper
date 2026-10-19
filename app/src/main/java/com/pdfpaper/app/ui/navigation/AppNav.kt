@@ -31,10 +31,12 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.pdfpaper.app.edit.EditingRuntime
+import com.pdfpaper.app.office.OfficeKind
 import com.pdfpaper.app.ui.components.AppBottomBar
 import com.pdfpaper.app.ui.components.WorkspaceHeader
 import com.pdfpaper.app.ui.home.HomeScreen
 import com.pdfpaper.app.ui.home.HomeViewModel
+import com.pdfpaper.app.ui.open.OpenDocumentScreen
 import com.pdfpaper.app.ui.pages.PagesScreen
 import com.pdfpaper.app.ui.recent.RecentScreen
 import com.pdfpaper.app.ui.tools.InfoScreen
@@ -51,6 +53,7 @@ object Routes {
     const val VIEWER = "viewer"
     const val PAGES = "pages"
     const val INFO = "info"
+    const val OPEN = "open"
 
     fun tool(id: String): String = "tool/${Uri.encode(id)}"
 
@@ -69,10 +72,18 @@ object Routes {
     }
 
     fun info(path: String): String = "$INFO?path=${Uri.encode(path)}"
+
+    /** The shared open flow: copy, detect, convert if needed, then the viewer. */
+    fun open(uri: String, name: String? = null): String =
+        "$OPEN?uri=${Uri.encode(uri)}&name=${Uri.encode(name.orEmpty())}"
 }
 
 @Composable
-fun AppNav(navController: NavHostController = rememberNavController()) {
+fun AppNav(
+    navController: NavHostController = rememberNavController(),
+    incomingDocument: Uri? = null,
+    onIncomingConsumed: () -> Unit = {}
+) {
     val backStackEntry by navController.currentBackStackEntryAsState()
     val route = backStackEntry?.destination?.route
     val showWorkspaceHeader = route == Routes.HOME ||
@@ -88,29 +99,32 @@ fun AppNav(navController: NavHostController = rememberNavController()) {
     var showDebugMenu by remember { mutableStateOf(false) }
 
     // One picker for the whole workspace, so Open works from the header and
-    // from the Home card and both land in the same viewer route.
+    // from the Home card and both land in the same open flow. PDFs, Word and
+    // PowerPoint files (and the legacy formats, which get an explanation) are
+    // offered; the copied bytes decide what actually happens.
     val picker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
     ) { uri ->
         if (uri == null) {
             homeViewModel.onPickerCancelled()
         } else {
-            homeViewModel.onDocumentPicked(context, uri)
+            navController.navigate(Routes.open(uri.toString()))
         }
     }
 
-    LaunchedEffect(homeState.pendingNavigation) {
-        homeState.pendingNavigation?.let { cached ->
-            navController.navigate(Routes.viewer(cached.file.absolutePath))
-            homeViewModel.onNavigationConsumed()
-        }
+    // A VIEW intent from another app (file manager, mail attachment) enters
+    // through the same flow as the picker.
+    LaunchedEffect(incomingDocument) {
+        val uri = incomingDocument ?: return@LaunchedEffect
+        navController.navigate(Routes.open(uri.toString()))
+        onIncomingConsumed()
     }
 
     Scaffold(
         topBar = {
             if (showWorkspaceHeader) {
                 WorkspaceHeader(
-                    onOpen = { picker.launch(arrayOf("application/pdf")) },
+                    onOpen = { picker.launch(OfficeKind.PICKER_MIME_TYPES) },
                     onSearch = { navController.navigateTopLevel(Routes.TOOLS) },
                     onDebug = if (debuggable) {
                         { showDebugMenu = true }
@@ -136,7 +150,7 @@ fun AppNav(navController: NavHostController = rememberNavController()) {
         ) {
             composable(Routes.HOME) {
                 HomeScreen(
-                    onOpen = { picker.launch(arrayOf("application/pdf")) },
+                    onOpen = { picker.launch(OfficeKind.PICKER_MIME_TYPES) },
                     onBrowseTools = { navController.navigateTopLevel(Routes.TOOLS) },
                     onBrowseRecent = { navController.navigateTopLevel(Routes.RECENT) },
                     onOpenTool = { tool -> navController.navigate(Routes.tool(tool.id)) },
@@ -150,8 +164,32 @@ fun AppNav(navController: NavHostController = rememberNavController()) {
             }
             composable(Routes.RECENT) {
                 RecentScreen(
-                    onOpenViewer = { cached ->
-                        navController.navigate(Routes.viewer(cached.file.absolutePath))
+                    onOpenDocument = { recent ->
+                        navController.navigate(Routes.open(recent.uri, recent.displayName))
+                    }
+                )
+            }
+            composable(
+                route = "${Routes.OPEN}?uri={uri}&name={name}",
+                arguments = listOf(
+                    navArgument("uri") {
+                        type = NavType.StringType
+                        defaultValue = ""
+                    },
+                    navArgument("name") {
+                        type = NavType.StringType
+                        defaultValue = ""
+                    }
+                )
+            ) { entry ->
+                OpenDocumentScreen(
+                    uri = entry.arguments?.getString("uri").orEmpty(),
+                    fallbackName = entry.arguments?.getString("name")?.takeIf { it.isNotBlank() },
+                    onBack = { navController.popBackStack() },
+                    onOpened = { pdf ->
+                        navController.navigate(Routes.viewer(pdf.absolutePath)) {
+                            popUpTo(Routes.OPEN) { inclusive = true }
+                        }
                     }
                 )
             }

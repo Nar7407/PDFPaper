@@ -4,16 +4,38 @@ import android.content.Context
 import java.nio.charset.StandardCharsets.UTF_8
 import java.util.Base64
 
-/** A document the user opened before, stored as a SAF URI plus its display name. */
+/**
+ * A document the user opened before, stored as a SAF URI plus its display name
+ * and the kind of file it was ("pdf", "docx" or "pptx") so Recent can reopen
+ * an office file through the same conversion flow.
+ */
 data class RecentFile(
     val uri: String,
-    val displayName: String
-)
+    val displayName: String,
+    val kind: String = KIND_PDF
+) {
+    /** A human label for the recent row. */
+    val kindLabel: String
+        get() = when (kind) {
+            KIND_DOCX -> "Word document"
+            KIND_PPTX -> "PowerPoint presentation"
+            else -> "PDF"
+        }
+
+    companion object {
+        const val KIND_PDF = "pdf"
+        const val KIND_DOCX = "docx"
+        const val KIND_PPTX = "pptx"
+
+        val KNOWN_KINDS = setOf(KIND_PDF, KIND_DOCX, KIND_PPTX)
+    }
+}
 
 /**
  * Storage format for the recent list. Pure JVM so it is unit-testable.
  *
- * Each record is two Base64-URL fields separated by a tab, one record per line.
+ * Each record is two or three Base64-URL fields separated by a tab, one record
+ * per line; records written before the kind field existed decode as PDFs.
  * Base64 keeps arbitrary URI/display-name characters (including tabs and
  * newlines) safe, and malformed records are skipped rather than throwing.
  */
@@ -26,7 +48,8 @@ object RecentCodec {
 
     fun encode(files: List<RecentFile>): String =
         files.take(MAX_RECENT).joinToString(RECORD_SEPARATOR.toString()) { file ->
-            "${encodeField(file.uri)}$FIELD_SEPARATOR${encodeField(file.displayName)}"
+            "${encodeField(file.uri)}$FIELD_SEPARATOR${encodeField(file.displayName)}" +
+                "$FIELD_SEPARATOR${encodeField(file.kind)}"
         }
 
     fun decode(raw: String?): List<RecentFile> {
@@ -35,11 +58,14 @@ object RecentCodec {
             .asSequence()
             .filter { it.isNotBlank() }
             .mapNotNull { line ->
-                val fields = line.split(FIELD_SEPARATOR, limit = 2)
-                if (fields.size != 2) return@mapNotNull null
+                val fields = line.split(FIELD_SEPARATOR, limit = 3)
+                if (fields.size < 2) return@mapNotNull null
                 val uri = decodeField(fields[0]) ?: return@mapNotNull null
                 val name = decodeField(fields[1]) ?: ""
-                if (uri.isBlank()) null else RecentFile(uri, name)
+                val kind = fields.getOrNull(2)?.let { decodeField(it) }
+                    ?.takeIf { it in RecentFile.KNOWN_KINDS }
+                    ?: RecentFile.KIND_PDF
+                if (uri.isBlank()) null else RecentFile(uri, name, kind)
             }
             .distinctBy { it.uri }
             .take(MAX_RECENT)
@@ -66,8 +92,8 @@ class RecentStore(context: Context) {
 
     fun list(): List<RecentFile> = RecentCodec.decode(preferences.getString(KEY_RECENT, null))
 
-    fun add(uri: String, displayName: String) {
-        val next = RecentCodec.add(list(), RecentFile(uri, displayName))
+    fun add(uri: String, displayName: String, kind: String = RecentFile.KIND_PDF) {
+        val next = RecentCodec.add(list(), RecentFile(uri, displayName, kind))
         preferences.edit().putString(KEY_RECENT, RecentCodec.encode(next)).apply()
     }
 
