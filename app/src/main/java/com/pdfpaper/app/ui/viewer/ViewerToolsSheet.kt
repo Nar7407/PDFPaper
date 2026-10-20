@@ -44,6 +44,7 @@ import com.pdfpaper.app.ui.theme.PDFPaperTheme
 import com.pdfpaper.app.ui.tools.ToolDefinition
 import com.pdfpaper.app.ui.tools.ToolRegistry
 import com.pdfpaper.app.ui.tools.ToolSection
+import com.pdfpaper.app.ui.tools.ToolStatus
 
 /**
  * The viewer's tools menu: a one-handed modal sheet, titled with the open file,
@@ -135,7 +136,7 @@ fun ViewerToolsSheetContent(
                         val available = tool.isAvailable(demoEngine)
                         ToolSheetRow(
                             tool = tool,
-                            available = available,
+                            status = tool.status(demoEngine),
                             onClick = {
                                 if (available) onSelect(tool) else onUnavailable(tool)
                             }
@@ -161,10 +162,11 @@ private fun SectionHeader(label: String) {
 @Composable
 private fun ToolSheetRow(
     tool: ToolDefinition,
-    available: Boolean,
+    status: ToolStatus,
     onClick: () -> Unit
 ) {
-    val label = if (available) tool.name else "${tool.name}, coming soon"
+    val available = status == ToolStatus.READY
+    val label = "${tool.name}, ${status.label.lowercase()}"
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -197,18 +199,24 @@ private fun ToolSheetRow(
                 modifier = Modifier.padding(top = 2.dp)
             )
         }
-        if (!available) {
-            Surface(
-                shape = RoundedCornerShape(50),
-                color = MaterialTheme.colorScheme.surfaceVariant
-            ) {
-                Text(
-                    text = "Coming soon",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
-                )
+        Surface(
+            shape = RoundedCornerShape(50),
+            color = if (available) {
+                MaterialTheme.colorScheme.primaryContainer
+            } else {
+                MaterialTheme.colorScheme.surfaceVariant
             }
+        ) {
+            Text(
+                text = status.label,
+                style = MaterialTheme.typography.labelSmall,
+                color = if (available) {
+                    MaterialTheme.colorScheme.onPrimaryContainer
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
+                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+            )
         }
     }
 }

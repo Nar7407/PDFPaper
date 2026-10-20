@@ -15,8 +15,13 @@ if /I "%~1"=="text-to-pdf" goto createpdf
 if /I "%~1"=="comments" goto comments
 if /I "%~1"=="stamp" goto stamp
 if /I "%~1"=="sign-visual" goto signvisual
+if /I "%~1"=="sign" goto sign
 if /I "%~1"=="signatures" goto signatures
 if /I "%~1"=="ocr" goto ocr
+if /I "%~1"=="compress" goto compress
+if /I "%~1"=="mark" goto mark
+if /I "%~1"=="export-images" goto exportimages
+if /I "%~1"=="extract-images" goto exportimages
 goto usage
 
 :fontinfo
@@ -50,12 +55,35 @@ set "SIGNVISUAL_ARGS=%SIGNVISUAL_ARGS:"=%"
 call "%~dp0gradlew.bat" -q :engine:signvisual --args="%SIGNVISUAL_ARGS%"
 exit /b %ERRORLEVEL%
 
+:sign
+call "%~dp0gradlew.bat" -q :signatures:sign --args="%*"
+exit /b %ERRORLEVEL%
+
 :signatures
 call "%~dp0gradlew.bat" -q :signatures:verify --args="%*"
 exit /b %ERRORLEVEL%
 
 :ocr
 call "%~dp0gradlew.bat" -q :engine:ocr --args="%*"
+exit /b %ERRORLEVEL%
+
+rem The compress case (JVM host codec + CLI). The comment also keeps the
+rem label off cmd.exe's 1024-byte chunk boundary: a "goto" whose label is
+rem exactly 1024 bytes away is silently not found.
+:compress
+call "%~dp0gradlew.bat" -q :render-jvm:compress --args="%*"
+exit /b %ERRORLEVEL%
+
+rem The mark case (watermarks, page numbers, Bates). The quotes are stripped
+rem so the arguments survive the batch file.
+:mark
+set "MARK_ARGS=%*"
+set "MARK_ARGS=%MARK_ARGS:"=%"
+call "%~dp0gradlew.bat" -q :engine:mark --args="%MARK_ARGS%"
+exit /b %ERRORLEVEL%
+
+:exportimages
+call "%~dp0gradlew.bat" -q :render-jvm:export --args="%*"
 exit /b %ERRORLEVEL%
 
 :usage
@@ -71,6 +99,11 @@ echo        cli text-to-pdf ^<in.txt^> --out ^<out.pdf^> 1>&2
 echo        cli comments list^|add^|reply^|set-status ... 1>&2
 echo        cli stamp list^|add ... 1>&2
 echo        cli sign-visual ^<in.pdf^> --page N --image^|--typed^|--strokes ... --x X --y Y --width W --out ^<out.pdf^> 1>&2
+echo        cli sign ^<in.pdf^> --p12 ^<key.p12^> --pass-env ^<ENV^> [--rect l,b,r,t] --out ^<out.pdf^> 1>&2
 echo        cli signatures verify ^<file.pdf^> [--truststore ^<pem-or-keystore^>] [--password ^<pw^>] 1>&2
 echo        cli ocr ^<file.pdf^> [--lang eng+hin] [--out ^<out.pdf^>] [--pages 1,3-5] [--text ^<words^>] 1>&2
+echo        cli compress ^<in.pdf^> --preset ^<light^|balanced^|strong^> --out ^<out.pdf^> [--dpi ^<n^>] [--quality ^<n^>] [--grayscale] 1>&2
+echo        cli mark watermark^|number-pages^|bates ^<in.pdf^> --out ^<out.pdf^> [...] 1>&2
+echo        cli export-images ^<in.pdf^> --out-dir ^<dir^> [--dpi 150] [--pages 1-5] [--format png^|jpg^|webp] 1>&2
+echo        cli extract-images ^<in.pdf^> --out-dir ^<dir^> [--min-size 32] [--list] 1>&2
 exit /b 2

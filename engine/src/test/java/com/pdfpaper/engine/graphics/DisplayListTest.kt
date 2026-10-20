@@ -277,7 +277,10 @@ class DisplayListTest {
         val dl = display(page("/Im1 Do", "/XObject << /Im1 5 0 R >>", listOf(image)))
 
         val draw = dl.commands[0] as DrawRasterImage
-        assertEquals(PdfMatrix.IDENTITY, draw.matrix)
+        // Image space has its origin at the top-left sample row and y growing
+        // down; with an identity CTM the unit square is flipped vertically so
+        // row 0 lands at the top (§8.9.5.2).
+        assertEquals(PdfMatrix(1.0, 0.0, 0.0, -1.0, 0.0, 1.0), draw.matrix)
         assertEquals(1, draw.image.width)
         assertEquals(1, draw.image.height)
         val pixel = assertNotNull(draw.image.pixelAt(0, 0))

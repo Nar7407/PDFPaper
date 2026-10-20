@@ -128,11 +128,7 @@ fun ToolsScreen(onOpenTool: (ToolDefinition) -> Unit) {
                             ToolRow(
                                 tool = tool,
                                 enabled = available,
-                                badge = when {
-                                    !available -> "Coming soon"
-                                    tool.needsEditingEngine -> "Demo"
-                                    else -> null
-                                },
+                                status = tool.status(demoEngine),
                                 onClick = { if (available) onOpenTool(tool) }
                             )
                         }
@@ -158,7 +154,7 @@ private fun ToolGroupHeader(label: String) {
 private fun ToolRow(
     tool: ToolDefinition,
     enabled: Boolean,
-    badge: String?,
+    status: ToolStatus,
     onClick: () -> Unit
 ) {
     Surface(
@@ -200,19 +196,25 @@ private fun ToolRow(
                         fontWeight = FontWeight.SemiBold,
                         modifier = Modifier.weight(1f, fill = false)
                     )
-                    if (badge != null) {
-                        Surface(
-                            shape = RoundedCornerShape(50),
-                            color = MaterialTheme.colorScheme.surfaceVariant,
-                            modifier = Modifier.padding(start = 8.dp)
-                        ) {
-                            Text(
-                                text = badge,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
-                            )
-                        }
+                    Surface(
+                        shape = RoundedCornerShape(50),
+                        color = if (status == ToolStatus.READY) {
+                            MaterialTheme.colorScheme.primaryContainer
+                        } else {
+                            MaterialTheme.colorScheme.surfaceVariant
+                        },
+                        modifier = Modifier.padding(start = 8.dp)
+                    ) {
+                        Text(
+                            text = status.label,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (status == ToolStatus.READY) {
+                                MaterialTheme.colorScheme.onPrimaryContainer
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            },
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                        )
                     }
                 }
                 Text(

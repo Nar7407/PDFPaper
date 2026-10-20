@@ -4,11 +4,14 @@ import android.content.pm.ApplicationInfo
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -18,6 +21,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
@@ -33,9 +37,15 @@ import androidx.navigation.navArgument
 import com.pdfpaper.app.edit.EditingRuntime
 import com.pdfpaper.app.office.OfficeKind
 import com.pdfpaper.app.ui.components.AppBottomBar
+import com.pdfpaper.app.ui.components.AppTopBar
 import com.pdfpaper.app.ui.components.WorkspaceHeader
+import com.pdfpaper.app.ui.compress.CompressScreen
+import com.pdfpaper.app.ui.export.ExportImagesScreen
 import com.pdfpaper.app.ui.home.HomeScreen
 import com.pdfpaper.app.ui.home.HomeViewModel
+import com.pdfpaper.app.ui.mark.BatesScreen
+import com.pdfpaper.app.ui.mark.PageNumbersScreen
+import com.pdfpaper.app.ui.mark.WatermarkScreen
 import com.pdfpaper.app.ui.open.OpenDocumentScreen
 import com.pdfpaper.app.ui.pages.PagesScreen
 import com.pdfpaper.app.ui.recent.RecentScreen
@@ -61,6 +71,9 @@ object Routes {
     const val OPEN = "open"
     const val NEW_PDF = "new-pdf"
     const val SCAN = "scan"
+    const val COMPRESS = "compress"
+    const val MARK = "mark"
+    const val EXPORT_IMAGES = "export-images"
     const val SETTINGS = "settings"
 
     fun tool(id: String): String = "tool/${Uri.encode(id)}"
@@ -81,6 +94,16 @@ object Routes {
     }
 
     fun info(path: String): String = "$INFO?path=${Uri.encode(path)}"
+
+    /** The compress screen, with the document to squeeze. */
+    fun compress(path: String): String = "$COMPRESS?path=${Uri.encode(path)}"
+
+    /** The mark screens, with the document and the tool to use on it. */
+    fun mark(path: String, tool: String): String =
+        "$MARK?path=${Uri.encode(path)}&tool=${Uri.encode(tool)}"
+
+    /** The export-images screen for one document. */
+    fun exportImages(path: String): String = "$EXPORT_IMAGES?path=${Uri.encode(path)}"
 
     /** The shared open flow: copy, detect, convert if needed, then the viewer. */
     fun open(uri: String, name: String? = null): String =
@@ -237,6 +260,69 @@ fun AppNav(
                 SettingsScreen(onBack = { navController.popBackStack() })
             }
             composable(
+                route = "${Routes.COMPRESS}?path={path}",
+                arguments = listOf(
+                    navArgument("path") {
+                        type = NavType.StringType
+                        defaultValue = ""
+                    }
+                )
+            ) { entry ->
+                CompressScreen(
+                    path = entry.arguments?.getString("path").orEmpty(),
+                    onBack = { navController.popBackStack() },
+                    onSaved = { navController.popBackStack() }
+                )
+            }
+            composable(
+                route = "${Routes.EXPORT_IMAGES}?path={path}",
+                arguments = listOf(
+                    navArgument("path") {
+                        type = NavType.StringType
+                        defaultValue = ""
+                    }
+                )
+            ) { entry ->
+                ExportImagesScreen(
+                    path = entry.arguments?.getString("path").orEmpty(),
+                    onBack = { navController.popBackStack() }
+                )
+            }
+            composable(
+                route = "${Routes.MARK}?path={path}&tool={tool}",
+                arguments = listOf(
+                    navArgument("path") {
+                        type = NavType.StringType
+                        defaultValue = ""
+                    },
+                    navArgument("tool") {
+                        type = NavType.StringType
+                        defaultValue = ""
+                    }
+                )
+            ) { entry ->
+                val path = entry.arguments?.getString("path").orEmpty()
+                val tool = entry.arguments?.getString("tool").orEmpty()
+                when (tool) {
+                    "watermark" -> WatermarkScreen(
+                        path = path,
+                        onBack = { navController.popBackStack() },
+                        onSaved = { navController.popBackStack() }
+                    )
+                    "page-numbers" -> PageNumbersScreen(
+                        path = path,
+                        onBack = { navController.popBackStack() },
+                        onSaved = { navController.popBackStack() }
+                    )
+                    "bates" -> BatesScreen(
+                        path = path,
+                        onBack = { navController.popBackStack() },
+                        onSaved = { navController.popBackStack() }
+                    )
+                    else -> MarkToolMissing(onBack = { navController.popBackStack() })
+                }
+            }
+            composable(
                 route = Routes.TOOL,
                 arguments = listOf(
                     navArgument("toolId") { type = NavType.StringType }
@@ -251,7 +337,10 @@ fun AppNav(
                     onOpenViewer = { path, edit, forms, editTool, panel ->
                         navController.navigate(Routes.viewer(path, edit, forms, editTool, panel))
                     },
-                    onOpenInfo = { path -> navController.navigate(Routes.info(path)) }
+                    onOpenInfo = { path -> navController.navigate(Routes.info(path)) },
+                    onOpenCompress = { path -> navController.navigate(Routes.compress(path)) },
+                    onOpenMark = { path, tool -> navController.navigate(Routes.mark(path, tool)) },
+                    onOpenExport = { path -> navController.navigate(Routes.exportImages(path)) }
                 )
             }
             composable(
@@ -294,7 +383,16 @@ fun AppNav(
                     onOpenInfo = { path -> navController.navigate(Routes.info(path)) },
                     onNewPdf = { navController.navigate(Routes.NEW_PDF) },
                     onScan = { navController.navigate(Routes.SCAN) },
-                    onOpenSettings = { navController.navigate(Routes.SETTINGS) }
+                    onOpenSettings = { navController.navigate(Routes.SETTINGS) },
+                    onOpenTool = { toolId, documentPath ->
+                        navController.navigate(
+                            when (toolId) {
+                                "compress" -> Routes.compress(documentPath)
+                                "export-images" -> Routes.exportImages(documentPath)
+                                else -> Routes.mark(documentPath, toolId)
+                            }
+                        )
+                    }
                 )
             }
             composable(
@@ -376,5 +474,18 @@ private fun NavHostController.navigateTopLevel(destination: String) {
         popUpTo(graph.findStartDestination().id) { saveState = true }
         launchSingleTop = true
         restoreState = true
+    }
+}
+
+/** Shown when a mark route is opened with a tool that does not exist. */
+@Composable
+private fun MarkToolMissing(onBack: () -> Unit) {
+    Surface(modifier = Modifier.fillMaxSize()) {
+        Column(modifier = Modifier.fillMaxSize()) {
+            AppTopBar(title = "Mark", onBack = onBack)
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text("That tool is not in this catalogue.")
+            }
+        }
     }
 }

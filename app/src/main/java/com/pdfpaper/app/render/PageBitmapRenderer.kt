@@ -47,6 +47,19 @@ object PageBitmapRenderer {
             PageBox(base.left, base.bottom, base.right, base.top, normalizeRotation(base.rotate + extraRotation))
         }
         val plan = PageGeometry.plan(box, scale, maxPixels)
+        return render(page, plan, decoder, fontDir)
+    }
+
+    /**
+     * Renders one page with an explicit [plan] (T45 page export, which owns
+     * the DPI and pixel-cap rules). Same painting path as the viewer.
+     */
+    fun render(
+        page: PdfPage,
+        plan: PageRenderPlan,
+        decoder: ExternalImageDecoder = AndroidImageDecoder,
+        fontDir: File? = null
+    ): RenderedPage {
         val bitmap = Bitmap.createBitmap(plan.pixelWidth, plan.pixelHeight, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)
         // PDF pages have no background of their own; viewers show them on white (§11.4.7 note).

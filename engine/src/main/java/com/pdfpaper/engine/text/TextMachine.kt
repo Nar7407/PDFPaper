@@ -82,7 +82,8 @@ class PdfFontCache(private val doc: PdfDocument, private val warnings: MutableLi
         val resolved = FontResolver.resolve(fontDict[name], doc)
         if (resolved == null) return fallback(resources, name)
         if (resolved.degraded && warnOnce(resources, name)) {
-            warnings += "font '/$name' degraded by missing data, continuing with fallback widths/encoding"
+            val reasons = resolved.diagnostics.reasons.joinToString("; ")
+            warnings += "font '/$name' degraded by missing data, continuing with fallback widths/encoding: $reasons"
         }
         cache[name] = resolved
         return resolved

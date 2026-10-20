@@ -72,6 +72,20 @@ object PdfSignatures {
         trustStore: TrustStore = EmptyTrustStore
     ): Result<SignatureVerification> = runCatching { verifySource(source, trustStore) }
 
+    /** Signs [file] incrementally; convenience delegate to [PdfSigner]. */
+    fun sign(
+        file: File,
+        key: SigningKey,
+        options: SigningOptions = SigningOptions()
+    ): Result<SigningResult> = PdfSigner.sign(file, key, options)
+
+    /** Signs [bytes] incrementally; convenience delegate to [PdfSigner]. */
+    fun sign(
+        bytes: ByteArray,
+        key: SigningKey,
+        options: SigningOptions = SigningOptions()
+    ): Result<SigningResult> = PdfSigner.sign(bytes, key, options)
+
     private fun verifySource(
         source: RandomAccessSource,
         trustStore: TrustStore
@@ -115,7 +129,49 @@ object PdfSignatures {
                 )
             }
         }
-        return SignatureVerification(reports, source.size)
+        return SignatureVerification(accountForLaterSignatures(reports), source.size)
+    }
+
+    /**
+     * A signature followed by another signature is not the same as arbitrary
+     * bytes appended after signing. If a later, otherwise intact signature
+     * covers the earlier signature's complete signed region through EOF, the
+     * earlier signature remains intact (T27). Its [SignatureReport.updatesAfterSigning]
+     * is still populated for callers that want the revision history.
+     */
+    private fun accountForLaterSignatures(reports: List<SignatureReport>): List<SignatureReport> {
+        if (reports.size < 2) return reports
+        val intactLater = reports.filter {
+            it.state == SignatureState.INTACT_AND_TRUSTED ||
+                it.state == SignatureState.INTACT_SIGNER_UNKNOWN
+        }
+        return reports.map { report ->
+            if (report.state != SignatureState.MODIFIED_AFTER_SIGNING || report.ranges.isEmpty()) {
+                report
+            } else {
+                val signedEnd = report.ranges.last().end
+                val covered = intactLater.any { other ->
+                    other !== report &&
+                        other.ranges.firstOrNull()?.offset == 0L &&
+                        (other.ranges.firstOrNull()?.end ?: 0L) >= signedEnd &&
+                        other.ranges.lastOrNull()?.end == report.fileLength
+                }
+                if (!covered) {
+                    report
+                } else {
+                    val state = when {
+                        report.signer == null -> SignatureState.INTACT_SIGNER_UNKNOWN
+                        report.chainStatus != ChainStatus.TRUSTED -> SignatureState.INTACT_SIGNER_UNKNOWN
+                        report.revocation == RevocationStatus.REVOKED -> SignatureState.INTACT_SIGNER_UNKNOWN
+                        else -> SignatureState.INTACT_AND_TRUSTED
+                    }
+                    report.copy(
+                        state = state,
+                        problems = report.problems.filterNot { it == "file was updated after signing" }
+                    )
+                }
+            }
+        }
     }
 
     // ------------------------------------------------------------------ field

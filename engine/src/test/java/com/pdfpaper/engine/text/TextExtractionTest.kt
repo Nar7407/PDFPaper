@@ -257,6 +257,28 @@ class TextExtractionTest {
     // --------------------------------------------------- graceful fallback
 
     @Test
+    fun indirectWidthsArrayIsResolvedAndDoesNotDegradeTheFont() {
+        // Word writes /Widths as an indirect array. Treating the reference
+        // itself as "no widths" loses every advance and logs a false warning.
+        val objs = onePagePdf(
+            content = "BT /F1 20 Tf 100 700 Td (HI) Tj ET",
+            fontRefEntries = "/F1 5 0 R",
+            extraObjects = listOf(
+                TestObj(
+                    5, 0, "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica " +
+                        "/Encoding /WinAnsiEncoding /FirstChar 72 /Widths 6 0 R >>"
+                ),
+                TestObj(6, 0, "[ 722 556 ]")
+            )
+        )
+        val page = extract(objs)
+        val run = page.runs.single()
+        assertEquals("HI", run.text)
+        assertEquals(100.0 + (722 + 556) / 1000.0 * 20, run.x1, 1e-6)
+        assertTrue(page.warnings.none { it.contains("degraded") }, "warnings=${page.warnings}")
+    }
+
+    @Test
     fun unknownFontWithoutWidthsExtractsTextWithoutCrash() {
         val objs = onePagePdf(
             content = "BT /F1 12 Tf 10 100 Td (Bye) Tj ET",

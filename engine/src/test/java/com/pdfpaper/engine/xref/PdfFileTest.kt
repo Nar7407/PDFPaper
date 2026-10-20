@@ -78,7 +78,9 @@ private fun xrefStreamPdf(objects: List<Obj>): ByteArray {
             buf.putInt(0)
             buf.putShort(65535.toShort())
         } else {
-            buf.put(1.toByte())
+            // ISO 32000-1, Table 18: type 2 is a plain object, field 2 is the
+            // byte offset and field 3 the generation number.
+            buf.put(2.toByte())
             buf.putInt(off)
             buf.putShort(0.toShort())
         }

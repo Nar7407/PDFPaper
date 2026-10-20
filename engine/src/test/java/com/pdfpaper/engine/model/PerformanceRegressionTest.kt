@@ -143,9 +143,9 @@ class PerformanceRegressionTest {
             entries.write(f3 and 0xFF)
         }
         entry(0, 0, 0)
-        for (i in 1 until firstCompressed) entry(1, offsets.getValue(i).toInt(), 0)
-        for (i in 0 until count) entry(2, objStmNum, i)
-        entry(1, offsets.getValue(xrefNum).toInt(), 0)
+        for (i in 1 until firstCompressed) entry(2, offsets.getValue(i).toInt(), 0)
+        for (i in 0 until count) entry(1, objStmNum, i)
+        entry(2, offsets.getValue(xrefNum).toInt(), 0)
         val xrefData = entries.toByteArray()
         w("$xrefNum 0 obj\n")
         w(

@@ -1,6 +1,7 @@
 package com.pdfpaper.app.ui.tools
 
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.BrandingWatermark
 import androidx.compose.material.icons.automirrored.outlined.CallMerge
 import androidx.compose.material.icons.automirrored.outlined.CallSplit
 import androidx.compose.material.icons.automirrored.outlined.FactCheck
@@ -9,14 +10,20 @@ import androidx.compose.material.icons.automirrored.outlined.RotateRight
 import androidx.compose.material.icons.outlined.AddBox
 import androidx.compose.material.icons.outlined.AddPhotoAlternate
 import androidx.compose.material.icons.outlined.Approval
+import androidx.compose.material.icons.outlined.CleaningServices
 import androidx.compose.material.icons.outlined.Comment
+import androidx.compose.material.icons.outlined.Compress
 import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.DeleteSweep
 import androidx.compose.material.icons.outlined.DocumentScanner
 import androidx.compose.material.icons.outlined.Draw
 import androidx.compose.material.icons.outlined.EditNote
 import androidx.compose.material.icons.outlined.FileDownload
+import androidx.compose.material.icons.outlined.FindReplace
+import androidx.compose.material.icons.outlined.FormatListNumbered
 import androidx.compose.material.icons.outlined.FormatUnderlined
 import androidx.compose.material.icons.outlined.Highlight
+import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.Photo
@@ -26,9 +33,12 @@ import androidx.compose.material.icons.outlined.Save
 import androidx.compose.material.icons.outlined.SaveAs
 import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material.icons.outlined.SwapVert
+import androidx.compose.material.icons.outlined.Tag
 import androidx.compose.material.icons.outlined.TextFields
 import androidx.compose.material.icons.outlined.TextSnippet
+import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material.icons.outlined.Verified
+import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.ui.graphics.vector.ImageVector
 
 /**
@@ -39,12 +49,23 @@ enum class ToolSection(val label: String) {
     PAGES("Pages"),
     EDIT("Edit"),
     ANNOTATE("Annotate"),
+    REDACT("Redact"),
     FORMS_SECURITY("Forms & Security"),
     DOCUMENT("Document")
 }
 
+/**
+ * The status chip shown in the catalogue and the viewer's tools sheet. The
+ * label lives here, next to the availability rules, so both surfaces say the
+ * same thing for the same tool.
+ */
+enum class ToolStatus(val label: String) {
+    READY("Ready"),
+    COMING_SOON("Coming soon")
+}
+
 /** Where the All tools flow goes after the user chooses a PDF. */
-enum class ToolDestination { ORGANIZER, VIEWER, INFO, NEW_PDF, SCAN }
+enum class ToolDestination { ORGANIZER, VIEWER, INFO, NEW_PDF, SCAN, COMPRESS, MARK, EXPORT_IMAGES }
 
 /**
  * One tool in the registry.
@@ -84,6 +105,10 @@ data class ToolDefinition(
     /** Usable in this build: the engine supports it, or the debug demo stands in. */
     fun isAvailable(demoEngine: Boolean): Boolean =
         supported && (!needsEditingEngine || demoEngine)
+
+    /** The chip both the All tools screen and the viewer's sheet display. */
+    fun status(demoEngine: Boolean): ToolStatus =
+        if (isAvailable(demoEngine)) ToolStatus.READY else ToolStatus.COMING_SOON
 }
 
 /**
@@ -257,6 +282,61 @@ object ToolRegistry {
             viewerAction = "stamps"
         ),
 
+        // ---- Redact: permanent privacy tools -------------------------------
+        // UI-4 is still in progress: the redact screens exist
+        // (ui/redact/*) but the viewer wiring is not finished, so the group
+        // stays "Coming soon" until that task resumes.
+        ToolDefinition(
+            id = "redact",
+            name = "Redact text and images",
+            description = "Draw a box or select text and images, then remove them for good.",
+            icon = Icons.Outlined.VisibilityOff,
+            section = ToolSection.REDACT,
+            keywords = listOf("redact", "remove", "hide", "black out", "privacy", "text", "image"),
+            supported = false,
+            viewerAction = "redact"
+        ),
+        ToolDefinition(
+            id = "redact-pages",
+            name = "Redact pages",
+            description = "Cover whole pages so none of their content remains visible.",
+            icon = Icons.Outlined.DeleteSweep,
+            section = ToolSection.REDACT,
+            keywords = listOf("redact", "page", "whole page", "hide", "privacy"),
+            supported = false,
+            viewerAction = "redact-pages"
+        ),
+        ToolDefinition(
+            id = "redact-find",
+            name = "Find text and redact",
+            description = "Find emails, phone numbers or a pattern and mark every match.",
+            icon = Icons.Outlined.FindReplace,
+            section = ToolSection.REDACT,
+            keywords = listOf("find", "search", "redact", "email", "phone", "regex", "pattern"),
+            supported = false,
+            viewerAction = "redact-find"
+        ),
+        ToolDefinition(
+            id = "redact-properties",
+            name = "Redaction properties",
+            description = "Choose the cover color, label and label size.",
+            icon = Icons.Outlined.Tune,
+            section = ToolSection.REDACT,
+            keywords = listOf("redact", "properties", "color", "label", "overlay", "font"),
+            supported = false,
+            viewerAction = "redact-properties"
+        ),
+        ToolDefinition(
+            id = "sanitize",
+            name = "Sanitize document",
+            description = "Remove metadata, hidden data and other privacy leftovers.",
+            icon = Icons.Outlined.CleaningServices,
+            section = ToolSection.REDACT,
+            keywords = listOf("sanitize", "clean", "privacy", "metadata", "hidden", "scrub", "strip"),
+            supported = false,
+            viewerAction = "sanitize"
+        ),
+
         // ---- Forms & Security ---------------------------------------------
         ToolDefinition(
             id = "fill-form",
@@ -322,6 +402,56 @@ object ToolRegistry {
             section = ToolSection.DOCUMENT,
             keywords = listOf("searchable", "recognition", "scan text", "hindi", "english", "ocr"),
             viewerAction = "ocr"
+        ),
+        ToolDefinition(
+            id = "compress",
+            name = "Compress PDF",
+            description = "Make a PDF smaller: images are scaled down and re-encoded.",
+            icon = Icons.Outlined.Compress,
+            section = ToolSection.DOCUMENT,
+            keywords = listOf("compress", "smaller", "optimize", "shrink", "size", "reduce"),
+            destination = ToolDestination.COMPRESS
+        ),
+        ToolDefinition(
+            id = "watermark",
+            name = "Watermark",
+            description = "Put a text or picture watermark on the pages.",
+            icon = Icons.AutoMirrored.Outlined.BrandingWatermark,
+            section = ToolSection.DOCUMENT,
+            keywords = listOf("watermark", "stamp", "diagonal", "draft", "confidential", "background"),
+            destination = ToolDestination.MARK
+        ),
+        ToolDefinition(
+            id = "page-numbers",
+            name = "Page numbers",
+            description = "Add a header, a footer and page numbers.",
+            icon = Icons.Outlined.FormatListNumbered,
+            section = ToolSection.DOCUMENT,
+            keywords = listOf("page number", "header", "footer", "pagination", "{page}"),
+            destination = ToolDestination.MARK
+        ),
+        ToolDefinition(
+            id = "bates",
+            name = "Bates numbering",
+            description = "Stamp a number on every page for legal files.",
+            icon = Icons.Outlined.Tag,
+            section = ToolSection.DOCUMENT,
+            keywords = listOf("bates", "stamp", "number", "legal", "prefix"),
+            destination = ToolDestination.MARK
+        ),
+        ToolDefinition(
+            id = "export-images",
+            name = "Export images",
+            description = "Save pages as PNG or JPEG, or pull out the pictures inside.",
+            icon = Icons.Outlined.Image,
+            section = ToolSection.DOCUMENT,
+            keywords = listOf("export", "images", "png", "jpeg", "jpg", "extract", "pictures", "dpi"),
+            // Available since the T45 acceptance run: exported pages match the
+            // viewer at 72/150/300 dpi, JPEGs come out byte-identical and the
+            // 300-page export stays inside the memory budget.
+            supported = true,
+            viewerAction = "export-images",
+            destination = ToolDestination.EXPORT_IMAGES
         ),
         ToolDefinition(
             id = "info",

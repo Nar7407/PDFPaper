@@ -54,13 +54,14 @@ internal object TextRunScanner {
         commands: List<ContentCommand>,
         resources: PdfDict?,
         doc: PdfDocument,
-        warnings: MutableList<String>
+        warnings: MutableList<String>,
+        initialCtm: PdfMatrix = PdfMatrix.IDENTITY
     ): List<ScannedTextRun> {
         val fonts = PdfFontCache(doc, warnings)
         val machine = TextMachine({ name -> fonts.fontFor(resources, name) }, warnings)
 
         val out = ArrayList<ScannedTextRun>()
-        var ctm = PdfMatrix.IDENTITY
+        var ctm = initialCtm
         val ctmStack = ArrayDeque<PdfMatrix>()
         var state = GraphicsState()
         val stateStack = ArrayDeque<GraphicsState>()

@@ -115,6 +115,17 @@ tasks.register<JavaExec>("ocr") {
     workingDir = rootProject.projectDir
 }
 
+// T44: watermarks, headers, footers, page numbers and Bates numbers. Usage:
+//   ./gradlew :engine:mark --args="mark watermark in.pdf --text DRAFT --out out.pdf"
+tasks.register<JavaExec>("mark") {
+    group = "verification"
+    description = "Add watermarks, headers, footers, page numbers or Bates numbers to a PDF."
+    classpath = sourceSets["main"].runtimeClasspath
+    mainClass.set("com.pdfpaper.engine.tools.PdfMarkCliKt")
+    // Paths on the command line are resolved from the repo root, not engine/.
+    workingDir = rootProject.projectDir
+}
+
 // T14: generates a scaled sibling corpus (the committed /testdata files are
 // tiny structural fixtures) and times each engine phase against it.
 tasks.register<JavaExec>("perfCheck") {

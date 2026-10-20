@@ -542,7 +542,12 @@ internal class DisplayListBuilder(
                 val result = PdfImages.decodeImage(stream.dict, stream.data, resources, doc, decoder)
                 warnings += result.warnings
                 val image = result.image ?: return
-                commands += DrawRasterImage(image, state.ctm, imageFillColor(image, state), state.fillAlpha)
+                commands += DrawRasterImage(
+                    image,
+                    imageUnitMatrix(state.ctm),
+                    imageFillColor(image, state),
+                    state.fillAlpha
+                )
             }
             "Form" -> drawForm(stream, state, depth)
             else -> warnOnce("xobject-subtype-$name", "XObject '/$name' has an unsupported subtype")
@@ -604,7 +609,12 @@ internal class DisplayListBuilder(
         val result = PdfImages.decodeImage(dict, inline.data, resources, doc, decoder)
         warnings += result.warnings
         val image = result.image ?: return
-        commands += DrawRasterImage(image, state.ctm, imageFillColor(image, state), state.fillAlpha)
+        commands += DrawRasterImage(
+            image,
+            imageUnitMatrix(state.ctm),
+            imageFillColor(image, state),
+            state.fillAlpha
+        )
     }
 
     private fun imageFillColor(image: RasterImage, state: GraphicsState): PdfColor =
@@ -645,6 +655,15 @@ internal class DisplayListBuilder(
         target.strokeAlpha = source.strokeAlpha
         target.blendMode = source.blendMode
     }
+
+    /**
+     * Image space → user space (§8.9.5.2). Sample row 0 is the top of the
+     * image, so the unit square's y axis points down: (0,0) is top-left and
+     * (0,1) is bottom-left. Without this flip every raster renderer paints
+     * decoded images upside down.
+     */
+    private fun imageUnitMatrix(ctm: PdfMatrix): PdfMatrix =
+        ctm * PdfMatrix.translation(0.0, 1.0) * PdfMatrix.scaling(1.0, -1.0)
 
     private fun matrixOf(ops: List<PdfObject>): PdfMatrix? {
         val values = ops.take(6).map { toDouble(it) }

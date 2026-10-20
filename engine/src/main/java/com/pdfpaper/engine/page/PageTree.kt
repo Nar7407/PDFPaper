@@ -53,7 +53,7 @@ class PdfPage internal constructor(
         ((inherited("Rotate") as? PdfInteger)?.value?.toIntOrNull() ?: 0).let { ((it % 360) + 360) % 360 }
 
     /** Resource dictionary (§7.8.3); inherited from the nearest ancestor. */
-    val resources: PdfDict? = inherited("Resources") as? PdfDict
+    val resources: PdfDict? = inherited("Resources")?.let { resolveValue(it) } as? PdfDict
 
     /**
      * Content (§7.8.1): a single /Contents stream or an array of streams,

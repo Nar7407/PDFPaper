@@ -12,3 +12,12 @@
 
 # If reflection is ever introduced (e.g. a plugin/serialization layer), add the
 # matching keep rules here rather than disabling shrinking globally.
+
+# The engine ships a JDK-ImageIO *fallback* raster decoder
+# (`edit.EditImages.defaultDecoder`, shared with the JVM tools). Android never
+# reaches it: every app call passes `AndroidRasterDecoder`. R8 still sees the
+# reference from the reachable `defaultDecoder()` method, so the JDK-only
+# classes it names must be allowed to be absent. A follow-up removes the
+# ImageIO fallback from :engine (see AGENTS.md, known issues).
+-dontwarn javax.imageio.**
+-dontwarn java.awt.image.**

@@ -58,7 +58,10 @@ fun ToolDetailScreen(
         startEditTool: String?,
         startPanel: String?
     ) -> Unit,
-    onOpenInfo: (path: String) -> Unit
+    onOpenInfo: (path: String) -> Unit,
+    onOpenCompress: (path: String) -> Unit,
+    onOpenMark: (path: String, tool: String) -> Unit,
+    onOpenExport: (path: String) -> Unit
 ) {
     val tool = ToolRegistry.byId(toolId)
     if (tool == null) {
@@ -87,6 +90,9 @@ fun ToolDetailScreen(
                         when (tool.destination) {
                             ToolDestination.ORGANIZER -> onOpenOrganizer(path, tool.organizerHint)
                             ToolDestination.INFO -> onOpenInfo(path)
+                            ToolDestination.COMPRESS -> onOpenCompress(path)
+                            ToolDestination.MARK -> onOpenMark(path, tool.id)
+                            ToolDestination.EXPORT_IMAGES -> onOpenExport(path)
                             ToolDestination.VIEWER -> onOpenViewer(
                                 path,
                                 tool.viewerTool != null || tool.opensForms,
@@ -242,6 +248,14 @@ private fun guidanceFor(tool: ToolDefinition): String = when (tool.id) {
         "Choose a PDF to open its form fields. Enter text, tick boxes or pick choices, then Save."
     "info" ->
         "Choose a PDF to see its page count, PDF version, encryption state, size and object count."
+    "compress" ->
+        "Choose a PDF to see how much smaller it can get, then write the smaller copy to a new file."
+    "watermark" ->
+        "Choose a PDF, then type the watermark (or pick a picture) and choose where it sits."
+    "page-numbers" ->
+        "Choose a PDF, then write the header and the footer. {page} and {pages} can be used in them."
+    "bates" ->
+        "Choose a PDF, then set the prefix, the first number and the corner the number goes in."
     else ->
         "Choose a PDF to open it, then open the tools menu (⋮) to use ${tool.name}."
 }

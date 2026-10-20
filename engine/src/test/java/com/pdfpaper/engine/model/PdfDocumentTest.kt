@@ -58,12 +58,12 @@ private fun compressedDoc(): ByteArray {
         buf.putShort(0.toShort())
     }
     fun uncompressed(offset: Int) {
-        buf.put(1.toByte())
+        buf.put(2.toByte())
         buf.putInt(offset)
         buf.putShort(0.toShort())
     }
     fun compressed(stream: Int, index: Int) {
-        buf.put(2.toByte())
+        buf.put(1.toByte())
         buf.putInt(stream)
         buf.putShort(index.toShort())
     }

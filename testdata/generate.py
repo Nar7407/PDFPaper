@@ -58,7 +58,9 @@ def xref_stream(objects, filtered=False):
     entries = bytearray()
     for i in range(max_num + 1):
         if i in offsets:
-            entries += struct.pack(">B", 1) + struct.pack(">I", offsets[i]) + struct.pack(">H", 0)
+            # ISO 32000-1, Table 18: type 2 is a plain object, field 2 is the
+            # byte offset and field 3 the generation number.
+            entries += struct.pack(">B", 2) + struct.pack(">I", offsets[i]) + struct.pack(">H", 0)
         else:
             entries += struct.pack(">B", 0) + struct.pack(">I", 0) + struct.pack(">H", 65535)
     data = zlib.compress(bytes(entries)) if filtered else bytes(entries)

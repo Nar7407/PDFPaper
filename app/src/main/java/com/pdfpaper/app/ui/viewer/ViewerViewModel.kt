@@ -13,6 +13,7 @@ import com.pdfpaper.app.edit.EditableStyle
 import com.pdfpaper.app.edit.EditingRuntime
 import com.pdfpaper.app.edit.PdfEngine
 import com.pdfpaper.app.ocr.MlKitOcrProvider
+import com.pdfpaper.app.render.AndroidImageDecoder
 import com.pdfpaper.app.render.AndroidRasterDecoder
 import com.pdfpaper.app.render.PageBitmapRenderer
 import com.pdfpaper.app.signatures.CertificateSummary
@@ -21,6 +22,18 @@ import com.pdfpaper.app.signatures.PlatformTrustStore
 import com.pdfpaper.app.signatures.SignatureDraft
 import com.pdfpaper.app.signatures.previewAspect
 import com.pdfpaper.app.signatures.toArtwork
+import com.pdfpaper.app.ui.redact.RedactionFindMode
+import com.pdfpaper.app.ui.redact.RedactionFindUi
+import com.pdfpaper.app.ui.redact.RedactionMarkUi
+import com.pdfpaper.app.ui.redact.RedactionOutcome
+import com.pdfpaper.app.ui.redact.RedactionProperties
+import com.pdfpaper.app.ui.redact.RedactionTool
+import com.pdfpaper.app.ui.redact.RedactionUiState
+import com.pdfpaper.app.ui.redact.SanitizeOutcome
+import com.pdfpaper.app.ui.redact.SanitizeUiState
+import com.pdfpaper.app.ui.redact.isRemovalEnabled
+import com.pdfpaper.app.ui.redact.toUi
+import com.pdfpaper.app.ui.redact.withRemoval
 import com.pdfpaper.engine.annot.AnnotationSpec
 import com.pdfpaper.engine.annot.CommentStatus
 import com.pdfpaper.engine.annot.InkSpec
@@ -35,6 +48,7 @@ import com.pdfpaper.engine.form.FieldKind
 import com.pdfpaper.engine.form.PdfField
 import com.pdfpaper.engine.form.formFields
 import com.pdfpaper.engine.geom.PdfRect
+import com.pdfpaper.engine.graphics.buildDisplayList
 import com.pdfpaper.engine.io.ByteArraySource
 import com.pdfpaper.engine.io.FileSource
 import com.pdfpaper.engine.links.DocumentLink
@@ -46,9 +60,16 @@ import com.pdfpaper.engine.ocr.PdfOcr
 import com.pdfpaper.engine.ocr.SearchableResult
 import com.pdfpaper.engine.page.PdfPage
 import com.pdfpaper.engine.page.pages
+import com.pdfpaper.engine.redact.PdfRedaction
+import com.pdfpaper.engine.redact.RedactionMarkType
+import com.pdfpaper.engine.redact.RedactionPreset
 import com.pdfpaper.engine.render.PageBox
 import com.pdfpaper.engine.render.PageGeometry
 import com.pdfpaper.engine.render.PageRenderPlan
+import com.pdfpaper.engine.sanitize.FormDataHandling
+import com.pdfpaper.engine.sanitize.PdfSanitizer
+import com.pdfpaper.engine.sanitize.SanitizeItem
+import com.pdfpaper.engine.sanitize.SanitizeOptions
 import com.pdfpaper.engine.security.PdfPasswordException
 import com.pdfpaper.engine.sign.SignatureCaption
 import com.pdfpaper.engine.sign.SignaturePlacement
@@ -143,8 +164,21 @@ data class ObjectEditState(
 /** A freehand stroke still being drawn, in page user space. */
 data class InkDraft(val pageIndex: Int, val points: List<Double>)
 
+/** What produced an export, so a successful save can update the right state. */
+enum class ViewerExportKind {
+    EDIT,
+    SIGNED,
+    SEARCHABLE,
+    REDACTION,
+    SANITIZE
+}
+
 /** Output bytes waiting for the user to choose a destination (SAF CreateDocument). */
-class ViewerExport(val bytes: ByteArray, val suggestedName: String)
+class ViewerExport(
+    val bytes: ByteArray,
+    val suggestedName: String,
+    val kind: ViewerExportKind = ViewerExportKind.EDIT
+)
 
 /**
  * The product of one signing operation (UI-3), kept until the result dialog is
@@ -287,6 +321,15 @@ class ViewerViewModel(application: Application) : AndroidViewModel(application) 
     private var ocrProvider: MlKitOcrProvider? = null
     private var ocrResult: SearchableResult? = null
     private var ocrJob: Job? = null
+
+    // --------------------------------------------------------- redaction (UI-4)
+
+    private val _redaction = MutableStateFlow(RedactionUiState())
+    val redaction: StateFlow<RedactionUiState> = _redaction.asStateFlow()
+    private var nextRedactionMarkId = 1L
+
+    private val _sanitize = MutableStateFlow(SanitizeUiState())
+    val sanitize: StateFlow<SanitizeUiState> = _sanitize.asStateFlow()
 
     /** Display name preserved across a save/reload of the edited cache copy. */
     private var displayNameOverride: String? = null
@@ -1076,7 +1119,11 @@ class ViewerViewModel(application: Application) : AndroidViewModel(application) 
     /** Hands the signed bytes to the usual SAF save flow. */
     fun exportSigned() {
         val outcome = _signing.value.outcome ?: return
-        _export.value = ViewerExport(outcome.bytes, outcome.suggestedName)
+        _export.value = ViewerExport(
+            outcome.bytes,
+            outcome.suggestedName,
+            ViewerExportKind.SIGNED
+        )
     }
 
     /**
@@ -1373,7 +1420,11 @@ class ViewerViewModel(application: Application) : AndroidViewModel(application) 
     fun exportSearchable() {
         val result = ocrResult ?: return
         val base = (_state.value.displayName ?: "document.pdf").substringBeforeLast('.')
-        _export.value = ViewerExport(result.bytes, "$base-searchable.pdf")
+        _export.value = ViewerExport(
+            result.bytes,
+            "$base-searchable.pdf",
+            ViewerExportKind.SEARCHABLE
+        )
     }
 
     private fun noTextSummary(result: SearchableResult): String {
@@ -1393,6 +1444,496 @@ class ViewerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun clearAnnotations() = _edit.update { it.copy(annotations = emptyList(), inkDraft = null) }
+
+    // ------------------------------------------------------- redaction (UI-4)
+
+    /**
+     * Starts the redaction session without throwing away marks the user already
+     * placed. The original document is never touched; [applyRedactions] writes
+     * new bytes and then verifies those bytes before offering them for saving.
+     */
+    fun startRedactionSession() {
+        _redaction.update {
+            it.copy(
+                active = true,
+                error = null,
+                outcome = null,
+                find = RedactionFindUi(),
+                pageSelection = emptySet()
+            )
+        }
+        clearSelection()
+    }
+
+    /** Leaves the marking UI. Pending marks are kept until the session is cleared. */
+    fun endRedaction() {
+        _redaction.update {
+            it.copy(active = false, find = RedactionFindUi(), pageSelection = emptySet())
+        }
+        clearSelection()
+    }
+
+    fun setRedactionTool(tool: RedactionTool) {
+        _redaction.update { it.copy(tool = tool, error = null) }
+        if (tool != RedactionTool.TEXT) clearSelection()
+    }
+
+    fun setRedactionProperties(properties: RedactionProperties) {
+        _redaction.update {
+            it.copy(
+                properties = properties.copy(
+                    overlayText = properties.overlayText.take(48),
+                    fontSize = properties.fontSize.coerceIn(8f, 32f)
+                )
+            )
+        }
+    }
+
+    fun applyRedactionPropertiesToMarks() {
+        _redaction.update { state ->
+            val properties = state.properties
+            state.copy(
+                marks = state.marks.map {
+                    it.copy(
+                        overlayText = properties.overlayText.takeIf(String::isNotBlank),
+                        color = properties.coverColor,
+                        fontSize = properties.fontSize
+                    )
+                }
+            )
+        }
+    }
+
+    fun toggleRedactionPage(pageIndex: Int) {
+        if (pageIndex !in pages.indices) return
+        _redaction.update { state ->
+            val selected = state.pageSelection
+            state.copy(
+                pageSelection = if (pageIndex in selected) selected - pageIndex else selected + pageIndex,
+                error = null
+            )
+        }
+    }
+
+    fun selectAllRedactionPages(pageCount: Int) {
+        _redaction.update {
+            it.copy(pageSelection = pages.indices.take(pageCount.coerceAtMost(pages.size)).toSet())
+        }
+    }
+
+    fun clearRedactionPageSelection() = _redaction.update { it.copy(pageSelection = emptySet()) }
+
+    fun markRedactionPages() {
+        val state = _redaction.value
+        if (state.pageSelection.isEmpty()) return
+        val existing = state.marks.filter { it.type == RedactionMarkType.PAGE }.map { it.pageIndex }.toSet()
+        val newMarks = state.pageSelection.sorted().filterNot { it in existing }.map { pageIndex ->
+            newRedactionMark(
+                pageIndex = pageIndex,
+                type = RedactionMarkType.PAGE,
+                rects = emptyList(),
+                properties = state.properties
+            )
+        }
+        if (newMarks.isEmpty()) {
+            _message.value = "Those pages already have whole-page marks"
+            return
+        }
+        _redaction.update {
+            it.copy(
+                marks = it.marks + newMarks,
+                pageSelection = emptySet(),
+                outcome = null,
+                error = null
+            )
+        }
+    }
+
+    /**
+     * Converts a drag in page fractions to unrotated PDF page space and adds a
+     * box mark. Tiny accidental taps are ignored.
+     */
+    fun addRedactionArea(pageIndex: Int, left: Float, top: Float, right: Float, bottom: Float) {
+        if (pageIndex !in pages.indices) return
+        val a = toUserSpace(
+            pageIndex,
+            left.coerceIn(0f, 1f),
+            top.coerceIn(0f, 1f)
+        ) ?: return
+        val b = toUserSpace(
+            pageIndex,
+            right.coerceIn(0f, 1f),
+            bottom.coerceIn(0f, 1f)
+        ) ?: return
+        val rect = PdfRect(a[0], a[1], b[0], b[1])
+        if (rect.width < 2.0 || rect.height < 2.0) {
+            _message.value = "Drag a larger box to mark content"
+            return
+        }
+        addRedactionMark(
+            newRedactionMark(
+                pageIndex = pageIndex,
+                type = RedactionMarkType.AREA,
+                rects = listOf(rect),
+                properties = _redaction.value.properties
+            )
+        )
+    }
+
+    /** Tap-to-mark an image. The smallest image containing the tap wins. */
+    fun markRedactionImage(pageIndex: Int, fractionX: Float, fractionY: Float) {
+        if (pageIndex !in pages.indices) return
+        val point = toUserSpace(pageIndex, fractionX, fractionY) ?: return
+        textScope.launch {
+            val page = pages.getOrNull(pageIndex) ?: return@launch
+            val display = runCatching { page.buildDisplayList(AndroidImageDecoder) }.getOrNull()
+            if (display == null) {
+                _message.value = "The page's images could not be read"
+                return@launch
+            }
+            val bounds = display.images.mapNotNull { image ->
+                val corners = listOf(
+                    image.matrix.apply(0.0, 0.0),
+                    image.matrix.apply(1.0, 0.0),
+                    image.matrix.apply(0.0, 1.0),
+                    image.matrix.apply(1.0, 1.0)
+                )
+                val xs = corners.map { it[0] }
+                val ys = corners.map { it[1] }
+                PdfRect(xs.min(), ys.min(), xs.max(), ys.max())
+            }.filter { !it.isEmpty && it.contains(point[0], point[1]) }
+            val image = bounds.minByOrNull { it.width * it.height }
+            if (image == null) {
+                _message.value = "No image under that point. Tap inside a picture."
+                return@launch
+            }
+            addRedactionMark(
+                newRedactionMark(
+                    pageIndex = pageIndex,
+                    type = RedactionMarkType.IMAGE,
+                    rects = listOf(image),
+                    properties = _redaction.value.properties
+                )
+            )
+        }
+    }
+
+    fun markRedactionSelection() {
+        val selection = _selection.value ?: return
+        if (selection.rects.isEmpty()) return
+        val rects = selection.rects.map { PdfRect(it.x0, it.y0, it.x1, it.y1) }
+        addRedactionMark(
+            newRedactionMark(
+                pageIndex = selection.pageIndex,
+                type = RedactionMarkType.TEXT_SELECTION,
+                rects = rects,
+                expectedText = selection.text.takeIf { it.isNotBlank() },
+                properties = _redaction.value.properties
+            )
+        )
+        clearSelection()
+    }
+
+    fun setRedactionFindMode(mode: RedactionFindMode) {
+        _redaction.update {
+            it.copy(
+                find = it.find.copy(
+                    mode = mode,
+                    matches = emptyList(),
+                    checked = emptySet(),
+                    searched = false,
+                    error = null
+                )
+            )
+        }
+    }
+
+    fun setRedactionFindQuery(query: String) {
+        _redaction.update { it.copy(find = it.find.copy(query = query, error = null)) }
+    }
+
+    fun findRedactions() {
+        val doc = document ?: return
+        val find = _redaction.value.find
+        if (find.running) return
+        if (find.mode == RedactionFindMode.REGEX && find.query.isBlank()) {
+            _redaction.update { it.copy(find = it.find.copy(error = "Enter a pattern first")) }
+            return
+        }
+        _redaction.update {
+            it.copy(find = it.find.copy(running = true, searched = false, error = null))
+        }
+        textScope.launch {
+            val result = runCatching {
+                PdfRedaction.find(
+                    document = doc,
+                    query = if (find.mode == RedactionFindMode.REGEX) find.query else "",
+                    regex = find.mode == RedactionFindMode.REGEX,
+                    preset = find.mode.preset
+                )
+            }
+            if (!isActive) return@launch
+            result.fold(
+                onSuccess = { matches ->
+                    _redaction.update {
+                        it.copy(
+                            find = it.find.copy(
+                                running = false,
+                                searched = true,
+                                matches = matches,
+                                checked = matches.indices.toSet(),
+                                error = null
+                            )
+                        )
+                    }
+                },
+                onFailure = { error ->
+                    _redaction.update {
+                        it.copy(
+                            find = it.find.copy(
+                                running = false,
+                                searched = true,
+                                matches = emptyList(),
+                                checked = emptySet(),
+                                error = error.message ?: "The search pattern is invalid"
+                            )
+                        )
+                    }
+                }
+            )
+        }
+    }
+
+    fun toggleRedactionFindMatch(index: Int) {
+        _redaction.update { state ->
+            val matches = state.find.matches
+            if (index !in matches.indices) return@update state
+            val checked = state.find.checked
+            state.copy(
+                find = state.find.copy(
+                    checked = if (index in checked) checked - index else checked + index
+                )
+            )
+        }
+    }
+
+    fun toggleAllRedactionFindMatches() {
+        _redaction.update { state ->
+            val checked = if (state.find.allChecked) emptySet() else state.find.matches.indices.toSet()
+            state.copy(find = state.find.copy(checked = checked))
+        }
+    }
+
+    fun markRedactionFindMatches() {
+        val state = _redaction.value
+        val checked = state.find.checked
+        if (checked.isEmpty()) return
+        val marks = state.find.matches.mapIndexedNotNull { index, match ->
+            if (index !in checked) return@mapIndexedNotNull null
+            newRedactionMark(
+                pageIndex = match.pageIndex,
+                type = RedactionMarkType.TEXT_SELECTION,
+                rects = match.rects,
+                expectedText = match.text,
+                properties = state.properties
+            )
+        }
+        if (marks.isEmpty()) return
+        _redaction.update {
+            it.copy(
+                marks = it.marks + marks,
+                find = RedactionFindUi(mode = it.find.mode, query = it.find.query),
+                outcome = null,
+                error = null
+            )
+        }
+    }
+
+    fun removeRedactionMark(id: Long) = _redaction.update { it.removeMark(id) }
+
+    fun updateRedactionMark(mark: RedactionMarkUi) = _redaction.update { it.updateMark(mark) }
+
+    fun clearRedactionMarks() = _redaction.update {
+        it.copy(marks = emptyList(), outcome = null, error = null)
+    }
+
+    /**
+     * Applies the pending marks, reopens the new bytes and verifies them with
+     * [PdfRedaction.verify]. The outcome is only published after that check
+     * completes; a verification exception is an error, not a success.
+     */
+    fun applyRedactions() {
+        val doc = document ?: return
+        val state = _redaction.value
+        if (state.marks.isEmpty() || state.busy) return
+        val expected = state.marks.mapNotNull { it.expectedText?.trim()?.takeIf(String::isNotEmpty) }
+            .distinct()
+        _redaction.update { it.copy(busy = true, error = null, outcome = null) }
+        textScope.launch {
+            val result = runCatching {
+                val redacted = PdfRedaction.apply(
+                    doc,
+                    state.marks.map { it.toEngineMark() },
+                    AndroidImageDecoder
+                )
+                val verification = PdfDocument.open(ByteArraySource(redacted.bytes))
+                    .getOrThrow()
+                    .use { verifier ->
+                        PdfRedaction.verify(
+                            verifier,
+                            expected,
+                            AndroidImageDecoder,
+                            redacted.unredacted
+                        )
+                    }
+                redacted to verification
+            }
+            if (!isActive) return@launch
+            result.fold(
+                onSuccess = { (redacted, verification) ->
+                    _redaction.update {
+                        it.copy(
+                            busy = false,
+                            outcome = RedactionOutcome(
+                                bytes = redacted.bytes,
+                                suggestedName = redactedName(),
+                                verification = verification.toUi(),
+                                marksApplied = redacted.marksApplied.takeIf { count -> count > 0 }
+                                    ?: state.marks.size,
+                                warnings = redacted.warnings
+                            ),
+                            error = null
+                        )
+                    }
+                },
+                onFailure = { error ->
+                    _redaction.update {
+                        it.copy(
+                            busy = false,
+                            error = error.message ?: "The redacted copy could not be verified",
+                            outcome = null
+                        )
+                    }
+                }
+            )
+        }
+    }
+
+    fun dismissRedactionOutcome() = _redaction.update { it.copy(outcome = null) }
+
+    fun saveRedactionCopy() {
+        val outcome = _redaction.value.outcome ?: return
+        _export.value = ViewerExport(
+            outcome.bytes,
+            outcome.suggestedName,
+            ViewerExportKind.REDACTION
+        )
+    }
+
+    // -------------------------------------------------------- sanitize (UI-4)
+
+    fun prepareSanitize() {
+        _sanitize.update { it.copy(running = false, outcome = null, error = null) }
+    }
+
+    fun setSanitizeOption(item: SanitizeItem, enabled: Boolean) {
+        _sanitize.update {
+            it.copy(
+                options = it.options.withRemoval(item, enabled),
+                outcome = null,
+                error = null
+            )
+        }
+    }
+
+    fun setSanitizeFormHandling(handling: FormDataHandling) {
+        _sanitize.update {
+            it.copy(
+                options = it.options.copy(formData = handling),
+                outcome = null,
+                error = null
+            )
+        }
+    }
+
+    fun cleanDocument() {
+        val doc = document ?: return
+        val state = _sanitize.value
+        if (state.running) return
+        _sanitize.update { it.copy(running = true, outcome = null, error = null) }
+        textScope.launch {
+            val result = runCatching {
+                PdfSanitizer.sanitize(doc, state.options).getOrThrow()
+            }
+            if (!isActive) return@launch
+            result.fold(
+                onSuccess = { sanitized ->
+                    _sanitize.update {
+                        it.copy(
+                            running = false,
+                            outcome = SanitizeOutcome(
+                                bytes = sanitized.bytes,
+                                report = sanitized.report,
+                                suggestedName = cleanName()
+                            ),
+                            error = null
+                        )
+                    }
+                },
+                onFailure = { error ->
+                    _sanitize.update {
+                        it.copy(
+                            running = false,
+                            error = error.message ?: "The document could not be cleaned",
+                            outcome = null
+                        )
+                    }
+                }
+            )
+        }
+    }
+
+    fun resetSanitizeOutcome() = _sanitize.update { it.copy(outcome = null, error = null) }
+
+    fun saveSanitizeCopy() {
+        val outcome = _sanitize.value.outcome ?: return
+        _export.value = ViewerExport(
+            outcome.bytes,
+            outcome.suggestedName,
+            ViewerExportKind.SANITIZE
+        )
+    }
+
+    private fun newRedactionMark(
+        pageIndex: Int,
+        type: RedactionMarkType,
+        rects: List<PdfRect>,
+        properties: RedactionProperties,
+        expectedText: String? = null
+    ): RedactionMarkUi = RedactionMarkUi(
+        id = nextRedactionMarkId++,
+        pageIndex = pageIndex,
+        type = type,
+        rects = rects,
+        expectedText = expectedText,
+        overlayText = properties.overlayText.takeIf { it.isNotBlank() },
+        color = properties.coverColor,
+        fontSize = properties.fontSize
+    )
+
+    private fun addRedactionMark(mark: RedactionMarkUi) {
+        _redaction.update { it.addMark(mark).copy(active = true) }
+    }
+
+    private fun redactedName(): String {
+        val name = _state.value.displayName ?: "document.pdf"
+        return "${name.substringBeforeLast('.')}-redacted.pdf"
+    }
+
+    private fun cleanName(): String {
+        val name = _state.value.displayName ?: "document.pdf"
+        return "${name.substringBeforeLast('.')}-clean.pdf"
+    }
 
     // --------------------------------------------------------- forms (T12)
 
@@ -1448,7 +1989,9 @@ class ViewerViewModel(application: Application) : AndroidViewModel(application) 
     fun completeExport(uri: Uri) {
         val pending = _export.value ?: return
         _export.value = null
-        _edit.update { it.copy(saving = true) }
+        if (pending.kind == ViewerExportKind.EDIT) {
+            _edit.update { it.copy(saving = true) }
+        }
         viewModelScope.launch {
             val result = withContext(Dispatchers.IO) {
                 runCatching {
@@ -1459,11 +2002,20 @@ class ViewerViewModel(application: Application) : AndroidViewModel(application) 
             }
             result.fold(
                 onSuccess = {
-                    _message.value = "Saved"
+                    _message.value = when (pending.kind) {
+                        ViewerExportKind.REDACTION -> "Saved a verified redacted copy"
+                        ViewerExportKind.SANITIZE -> "Saved a clean copy"
+                        ViewerExportKind.SEARCHABLE -> "Saved a searchable copy"
+                        ViewerExportKind.SIGNED -> "Saved a signed copy"
+                        ViewerExportKind.EDIT -> "Saved"
+                    }
                     reloadSaved(pending.bytes)
                 },
                 onFailure = { error ->
-                    _edit.update { it.copy(saving = false) }
+                    _export.value = pending
+                    if (pending.kind == ViewerExportKind.EDIT) {
+                        _edit.update { it.copy(saving = false) }
+                    }
                     _message.value = error.message ?: "Save failed"
                 }
             )
@@ -1628,6 +2180,9 @@ class ViewerViewModel(application: Application) : AndroidViewModel(application) 
         ocrProvider = null
         ocrResult = null
         _ocr.value = ViewerOcrState()
+        _redaction.value = RedactionUiState()
+        nextRedactionMarkId = 1L
+        _sanitize.value = SanitizeUiState()
     }
 
     private fun publish(index: Int, plan: PageRenderPlan, bitmap: Bitmap) {

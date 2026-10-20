@@ -14,8 +14,11 @@ class ToolRegistryTest {
                 "rotate", "reorder", "delete", "extract", "insert", "split", "merge",
                 "add-text", "edit-text", "add-image", "edit-image",
                 "highlight", "underline", "draw", "note", "comments", "stamp",
+                "redact", "redact-pages", "redact-find", "redact-properties", "sanitize",
                 "fill-form", "sign", "signatures", "protect",
-                "new-pdf", "scan", "ocr", "info", "save", "save-as", "share", "print"
+                "new-pdf", "scan", "ocr", "compress",
+                "watermark", "page-numbers", "bates",
+                "export-images", "info", "save", "save-as", "share", "print"
             ),
             ToolRegistry.search("  ").map { it.id }
         )
@@ -66,12 +69,49 @@ class ToolRegistryTest {
     fun newToolsHaveExplicitDestinationsOrViewerPanels() {
         assertEquals(ToolDestination.NEW_PDF, ToolRegistry.byId("new-pdf")?.destination)
         assertEquals(ToolDestination.SCAN, ToolRegistry.byId("scan")?.destination)
+        assertEquals(ToolDestination.COMPRESS, ToolRegistry.byId("compress")?.destination)
         assertEquals("comments", ToolRegistry.byId("comments")?.viewerAction)
         assertEquals("stamps", ToolRegistry.byId("stamp")?.viewerAction)
         assertEquals("sign", ToolRegistry.byId("sign")?.viewerAction)
         assertEquals("signatures", ToolRegistry.byId("signatures")?.viewerAction)
         assertEquals("ocr", ToolRegistry.byId("ocr")?.viewerAction)
         assertTrue(ToolRegistry.byId("ocr")!!.isAvailable(demoEngine = false))
+    }
+
+    @Test
+    fun theCompressToolIsReadyAndSearchable() {
+        val compress = ToolRegistry.byId("compress")!!
+        assertEquals("Compress PDF", compress.name)
+        assertEquals(ToolSection.DOCUMENT, compress.section)
+        assertTrue(compress.isAvailable(demoEngine = false))
+        assertEquals(ToolStatus.READY, compress.status(demoEngine = false))
+        assertEquals(listOf("compress"), ToolRegistry.search("shrink").map { it.id })
+        assertEquals(listOf("compress"), ToolRegistry.search("smaller").map { it.id })
+    }
+
+    @Test
+    fun theMarkToolsAreReadyAndSearchable() {
+        val watermark = ToolRegistry.byId("watermark")!!
+        assertEquals("Watermark", watermark.name)
+        assertEquals("Put a text or picture watermark on the pages.", watermark.description)
+        assertEquals(ToolSection.DOCUMENT, watermark.section)
+        assertEquals(ToolDestination.MARK, watermark.destination)
+        assertTrue(watermark.isAvailable(demoEngine = false))
+        assertEquals(ToolStatus.READY, watermark.status(demoEngine = false))
+
+        val numbers = ToolRegistry.byId("page-numbers")!!
+        assertEquals("Page numbers", numbers.name)
+        assertEquals(ToolDestination.MARK, numbers.destination)
+        assertTrue(numbers.isAvailable(demoEngine = false))
+
+        val bates = ToolRegistry.byId("bates")!!
+        assertEquals("Bates numbering", bates.name)
+        assertEquals(ToolDestination.MARK, bates.destination)
+        assertTrue(bates.isAvailable(demoEngine = false))
+
+        assertEquals(listOf("watermark"), ToolRegistry.search("confidential").map { it.id })
+        assertEquals(listOf("page-numbers"), ToolRegistry.search("pagination").map { it.id })
+        assertEquals(listOf("bates"), ToolRegistry.search("legal").map { it.id })
     }
 
     @Test
@@ -108,6 +148,7 @@ class ToolRegistryTest {
                 ToolSection.PAGES,
                 ToolSection.EDIT,
                 ToolSection.ANNOTATE,
+                ToolSection.REDACT,
                 ToolSection.FORMS_SECURITY,
                 ToolSection.DOCUMENT
             ),
@@ -117,5 +158,26 @@ class ToolRegistryTest {
         assertTrue(ToolRegistry.grouped(ToolRegistry.search("rotate")).none {
             it.first == ToolSection.EDIT
         })
+    }
+
+    @Test
+    fun redactGroupHoldsTheFivePrivacyTools() {
+        assertEquals(
+            listOf("redact", "redact-pages", "redact-find", "redact-properties", "sanitize"),
+            ToolRegistry.tools.filter { it.section == ToolSection.REDACT }.map { it.id }
+        )
+    }
+
+    @Test
+    fun everyToolReportsAReadyOrComingSoonStatus() {
+        ToolRegistry.tools.forEach { tool ->
+            val status = tool.status(demoEngine = false)
+            assertTrue(
+                tool.id,
+                status == ToolStatus.READY || status == ToolStatus.COMING_SOON
+            )
+        }
+        // A supported tool is Ready in a release build.
+        assertEquals(ToolStatus.READY, ToolRegistry.byId("rotate")!!.status(false))
     }
 }

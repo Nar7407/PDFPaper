@@ -84,7 +84,50 @@ internal class PdfDocumentAssembler(
      * Moves, resizes or turns existing primary-document annotations while they
      * are copied (T26). The annotation object numbers are source object numbers.
      */
-    private val annotationPlacements: List<AnnotationPlacement> = emptyList()
+    private val annotationPlacements: List<AnnotationPlacement> = emptyList(),
+    /**
+     * AcroForm fields to remove completely, by source object number (T28).
+     * Their widgets are normally also in [droppedAnnots].
+     */
+    private val droppedFields: Set<Int> = emptySet(),
+    /** Returns true when a source outline item must not survive (T28). */
+    private val outlineFilter: ((PdfDict) -> Boolean)? = null,
+    /**
+     * Redaction rewrite for one primary-document page (T28). It receives the
+     * page entries after boxes and retained annotations have been copied and
+     * must add fresh /Resources and /Contents itself.
+     */
+    private val redactionPages: Map<Int, (PdfPage, LinkedHashMap<PdfName, PdfObject>, PdfObjectCopier, PdfDocumentBuilder) -> Unit> = emptyMap(),
+    /** Remove unreachable object bodies before serialising (T28). */
+    private val garbageCollect: Boolean = false,
+    /** T29 sanitizer catalogue policy. Defaults keep the pre-T29 behaviour. */
+    private val preserveInfo: Boolean = true,
+    private val preserveMetadata: Boolean = true,
+    private val preserveOpenAction: Boolean = true,
+    private val preserveCatalogActions: Boolean = false,
+    private val preserveOutlines: Boolean = true,
+    private val preserveNamedDestinations: Boolean = true,
+    private val preserveAcroForm: Boolean = true,
+    private val preserveOptionalContent: Boolean = false,
+    private val preserveEmbeddedFiles: Boolean = false,
+    private val preserveJavaScriptNames: Boolean = false,
+    /** Keep the page preview images the file carries (catalogue /Thumbnails). */
+    private val preserveThumbnails: Boolean = false,
+    /** Drop /A and /AA from copied AcroForm fields (T29 sanitizer). */
+    private val stripActions: Boolean = false,
+    /**
+     * Per-page hook (T44): the caller rewrites the copied page dictionary
+     * itself. It is used to add watermarks, headers, footers and Bates numbers
+     * to a page, and to take them away again.
+     */
+    private val pageHooks: Map<Int, (PdfPage, LinkedHashMap<PdfName, PdfObject>, PdfObjectCopier, PdfDocumentBuilder) -> Unit> = emptyMap(),
+    /**
+     * Catalogue entries the caller adds (T44: the optional content group the
+     * added marks live in). The callback runs after the pages are copied, so
+     * it can refer to objects the page hooks created and can change the
+     * catalogue the assembler has built so far.
+     */
+    private val catalogExtras: ((PdfDocumentBuilder, LinkedHashMap<PdfName, PdfObject>) -> Unit)? = null
 ) {
 
     private val builder = PdfDocumentBuilder(version)
@@ -110,6 +153,10 @@ internal class PdfDocumentAssembler(
 
     /** Text-edit reports gathered by the last [assemble] call. */
     fun textReports(): List<TextEditReport> = textReports
+
+    /** Unreachable bodies dropped by the last [assemble] call (T29). */
+    var unusedObjectsRemoved: Int = 0
+        private set
 
     fun assemble(): ByteArray {
         checkNotEncrypted(primary)
@@ -180,9 +227,10 @@ internal class PdfDocumentAssembler(
         // 7. AcroForm field values (T12) are written into the already-copied
         //    field objects, then /Info and /ID are copied across.
         if (formValues.isNotEmpty()) FormFiller(builder).fill(formValues)
-        copyInfo()
+        if (preserveInfo) copyInfo()
         copyId()
         if (ocrFont.isInitialized()) ocrFont.value.finish()
+        if (garbageCollect) unusedObjectsRemoved = builder.pruneUnreachable()
         return builder.build()
     }
 
@@ -197,10 +245,12 @@ internal class PdfDocumentAssembler(
 
         val pageEdits = if (doc === primary) editsByPage[selection.pageIndex].orEmpty() else emptyList()
         val edited = pageEdits.isNotEmpty()
-        val skipKeys = if (edited) {
-            setOf("Parent", "Annots", "Resources", "Contents")
-        } else {
-            setOf("Parent", "Annots")
+        val redaction = if (doc === primary) redactionPages[selection.pageIndex] else null
+        val redacted = redaction != null
+        val skipKeys = when {
+            edited -> setOf("Parent", "Annots", "Resources", "Contents")
+            redacted -> setOf("Parent", "Resources", "Contents")
+            else -> setOf("Parent", "Annots")
         }
         val base = copier.copyDict(src, skipKeys = skipKeys) ?: PdfDict(emptyMap())
         val entries = LinkedHashMap(base.entries)
@@ -209,7 +259,7 @@ internal class PdfDocumentAssembler(
         materialise(entries, copier, "MediaBox", src["MediaBox"] ?: page.mediaBox)
         materialise(entries, copier, "CropBox", src["CropBox"] ?: page.cropBox)
         materialise(entries, copier, "Rotate", src["Rotate"] ?: inheritedRotate(page))
-        if (!edited) {
+        if (!edited && !redacted) {
             materialise(entries, copier, "Resources", src["Resources"] ?: page.resources)
         }
 
@@ -231,8 +281,13 @@ internal class PdfDocumentAssembler(
             entries[PdfName("Rotate")] =
                 PdfInteger(normalizeRotation(page.rotate + selection.rotationDelta).toLong())
         }
-        if (edited) {
+        if (redacted) {
+            redaction?.invoke(page, entries, copier, builder)
+        } else if (edited) {
             PageEditApplier(builder, copier, page, pageEdits, textReports, ocrFont).apply(entries)
+        }
+        if (doc === primary) {
+            pageHooks[selection.pageIndex]?.invoke(page, entries, copier, builder)
         }
         builder.put(ref.objNum, PdfDict(entries))
     }
@@ -385,7 +440,16 @@ internal class PdfDocumentAssembler(
     }
 
     private fun importNames(): PdfRef? {
-        if (keptNames.isEmpty()) return null
+        val entries = LinkedHashMap<PdfName, PdfObject>()
+        importDestinationNameTree()?.let { entries[PdfName("Dests")] = it }
+        if (preserveEmbeddedFiles) copyNameTree("EmbeddedFiles")?.let { entries[PdfName("EmbeddedFiles")] = it }
+        if (preserveJavaScriptNames) copyNameTree("JavaScript")?.let { entries[PdfName("JavaScript")] = it }
+        if (entries.isEmpty()) return null
+        return builder.add(PdfDict(entries))
+    }
+
+    private fun importDestinationNameTree(): PdfRef? {
+        if (!preserveNamedDestinations || keptNames.isEmpty()) return null
         val copier = copierFor(primary)
         val namesArray = ArrayList<PdfObject>()
         for ((name, dest) in rawNames.entries.sortedBy { it.key }) {
@@ -395,8 +459,21 @@ internal class PdfDocumentAssembler(
             namesArray += copied
         }
         if (namesArray.isEmpty()) return null
-        val leaf = builder.add(PdfDict(mapOf(PdfName("Names") to PdfArray(namesArray))))
-        return builder.add(PdfDict(mapOf(PdfName("Dests") to leaf)))
+        return builder.add(PdfDict(mapOf(PdfName("Names") to PdfArray(namesArray))))
+    }
+
+    /**
+     * Copies one non-destination name tree unchanged. Values are remapped by
+     * the copier, so embedded files, JavaScript actions and file specifications
+     * stay self-contained in the sanitized output (T29).
+     */
+    private fun copyNameTree(key: String): PdfObject? {
+        val catalog = primary.resolveRoot() as? PdfDict ?: return null
+        val rawNames = catalog["Names"] ?: return null
+        val copier = copierFor(primary)
+        val names = copier.resolve(rawNames) as? PdfDict ?: return null
+        val value = names[key] ?: return null
+        return copier.copyValue(value)
     }
 
     // -- Outlines (bookmarks) -------------------------------------------------
@@ -479,6 +556,7 @@ internal class PdfDocumentAssembler(
     }
 
     private fun keepOutlineItem(copier: PdfObjectCopier, src: PdfDict): Boolean {
+        if (outlineFilter?.invoke(src) == true) return false
         val destOk = src["Dest"]?.let { sourceDestKeepsPage(copier, it) } == true
         val actionOk = src["A"]?.let { sourceActionKeepsPage(copier, it) } == true
         return destOk || actionOk || src["First"] != null
@@ -513,8 +591,9 @@ internal class PdfDocumentAssembler(
     }
 
     private fun importField(copier: PdfObjectCopier, fieldObj: PdfObject, parentRef: PdfRef?): PdfRef? {
-        val src = copier.resolve(fieldObj) as? PdfDict ?: return null
         val srcObjNum = (fieldObj as? PdfRef)?.objNum
+        if (srcObjNum != null && srcObjNum in droppedFields) return null
+        val src = copier.resolve(fieldObj) as? PdfDict ?: return null
 
         // A widget may already have been copied from a page's /Annots; reuse it.
         if (srcObjNum != null) {
@@ -532,7 +611,15 @@ internal class PdfDocumentAssembler(
         val hadKids = src["Kids"] is PdfArray
         if (keptKids.isEmpty() && (pageDropped || hadKids)) return null
 
-        val base = copier.copyDict(src, skipKeys = setOf("Parent", "Kids")) ?: PdfDict(emptyMap())
+        val skip = LinkedHashSet<String>().apply {
+            add("Parent")
+            add("Kids")
+            if (stripActions) {
+                add("A")
+                add("AA")
+            }
+        }
+        val base = copier.copyDict(src, skipKeys = skip) ?: PdfDict(emptyMap())
         val entries = LinkedHashMap(base.entries)
         if (parentRef != null) entries[PdfName("Parent")] = parentRef else entries.remove(PdfName("Parent"))
         if (keptKids.isNotEmpty()) entries[PdfName("Kids")] = PdfArray(keptKids) else entries.remove(PdfName("Kids"))
@@ -560,17 +647,43 @@ internal class PdfDocumentAssembler(
         val primaryRoot = primary.resolveRoot() as? PdfDict
         if (primaryRoot != null) {
             val copier = copierFor(primary)
-            for (key in listOf("ViewerPreferences", "PageLayout", "PageMode", "Lang", "Metadata", "Version")) {
+            val keys = ArrayList<String>()
+            keys += listOf("ViewerPreferences", "PageLayout", "PageMode", "Lang", "Version")
+            if (preserveMetadata) keys += "Metadata"
+            if (preserveOptionalContent) keys += "OCProperties"
+            for (key in keys) {
                 primaryRoot[key]?.let { copier.copyValue(it)?.let { v -> catalog[PdfName(key)] = v } }
             }
-            primaryRoot["OpenAction"]?.let { oa ->
-                val copied = copier.copyValue(oa)
-                if (copied != null && openActionValid(copied)) catalog[PdfName("OpenAction")] = copied
+            if (preserveOpenAction) {
+                primaryRoot["OpenAction"]?.let { oa ->
+                    val copied = copier.copyValue(oa)
+                    if (copied != null && openActionValid(copied)) catalog[PdfName("OpenAction")] = copied
+                }
             }
-            importOutlines(primaryRoot)?.let { catalog[PdfName("Outlines")] = it }
-            importNames()?.let { catalog[PdfName("Names")] = it }
-            importAcroForm(primaryRoot)?.let { catalog[PdfName("AcroForm")] = it }
+            if (preserveCatalogActions) {
+                primaryRoot["AA"]?.let { aa ->
+                    copier.copyValue(aa)?.let { catalog[PdfName("AA")] = it }
+                }
+            }
+            if (preserveOutlines) importOutlines(primaryRoot)?.let { catalog[PdfName("Outlines")] = it }
+            if (preserveNamedDestinations || preserveEmbeddedFiles || preserveJavaScriptNames) {
+                importNames()?.let { catalog[PdfName("Names")] = it }
+            }
+            if (preserveAcroForm) importAcroForm(primaryRoot)?.let { catalog[PdfName("AcroForm")] = it }
+            if (preserveEmbeddedFiles) {
+                for (key in listOf("AF", "Collection")) {
+                    primaryRoot[key]?.let { value ->
+                        copier.copyValue(value)?.let { catalog[PdfName(key)] = it }
+                    }
+                }
+            }
+            if (preserveThumbnails) {
+                primaryRoot["Thumbnails"]?.let { value ->
+                    copier.copyValue(value)?.let { catalog[PdfName("Thumbnails")] = it }
+                }
+            }
         }
+        catalogExtras?.invoke(builder, catalog)
         return builder.add(PdfDict(catalog))
     }
 

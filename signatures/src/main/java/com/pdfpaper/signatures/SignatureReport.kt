@@ -13,7 +13,11 @@ enum class SignatureState {
     /** Signature is intact but the signer is unknown, untrusted, expired or revoked. */
     INTACT_SIGNER_UNKNOWN,
 
-    /** Signature is intact for its byte range, but bytes were appended after it. */
+    /**
+     * Signature is intact for its byte range, but arbitrary bytes were appended
+     * after it. A later, otherwise intact signature covering the update keeps
+     * the earlier signature's state instead (multi-signature documents).
+     */
     MODIFIED_AFTER_SIGNING,
 
     /** Digest or CMS signature does not match (tampered/corrupt). */

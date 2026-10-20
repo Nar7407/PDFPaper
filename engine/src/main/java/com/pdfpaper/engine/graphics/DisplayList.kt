@@ -69,7 +69,9 @@ class DrawTextRun(val run: PdfTextRun, matrix: PdfMatrix) : DrawCommand(matrix)
 
 /**
  * An image drawn into the unit square of image space mapped by [matrix]
- * (§8.9.5.2). [fillColor] tints stencil masks ([RasterImage.stencil]).
+ * (§8.9.5.2). Image space has (0,0) at the top-left sample row and y growing
+ * down; renderers draw bitmap row 0 at unit-square y=0. [fillColor] tints
+ * stencil masks ([RasterImage.stencil]).
  */
 class DrawRasterImage(
     val image: RasterImage,

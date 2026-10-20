@@ -34,3 +34,13 @@ tasks.register<JavaExec>("verify") {
     // Paths on the command line are resolved from the repo root, not signatures/.
     workingDir = rootProject.projectDir
 }
+
+// T27: incremental signing CLI. Usage:
+//   ./gradlew :signatures:sign --args="sign in.pdf --p12 key.p12 --pass-env PDFPAPER_PASS --out signed.pdf"
+tasks.register<JavaExec>("sign") {
+    group = "signatures"
+    description = "Create an incremental PKCS#7/CAdES signature in a PDF."
+    classpath = sourceSets["main"].runtimeClasspath
+    mainClass.set("com.pdfpaper.signatures.tools.SigningCliKt")
+    workingDir = rootProject.projectDir
+}

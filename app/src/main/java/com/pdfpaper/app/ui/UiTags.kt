@@ -103,7 +103,118 @@ object UiTags {
     const val SETTINGS_SIGNATURES = "settings_signatures"
     const val DEVICE_CONFIRM_FALLBACK = "device_confirm_fallback"
 
+    // Task UI-4: redaction and sanitizing.
+    const val REDACT_BAR = "redact_bar"
+    const val REDACT_SHEET = "redact_sheet"
+    const val REDACT_MARKS = "redact_marks"
+    const val REDACT_PANEL_PAGES = "redact_panel_pages"
+    const val REDACT_PANEL_FIND = "redact_panel_find"
+    const val REDACT_PANEL_PROPERTIES = "redact_panel_properties"
+    const val REDACT_MARK_SELECTION = "redact_mark_selection"
+    const val REDACT_MARK_PAGES = "redact_mark_pages"
+    const val REDACT_FIND = "redact_find"
+    const val REDACT_FIND_MARK = "redact_find_mark"
+    const val REDACT_APPLY = "redact_apply"
+    const val REDACT_CONFIRM = "redact_confirm"
+    const val REDACT_CONFIRM_SAVE = "redact_confirm_save"
+    const val REDACT_VERIFICATION = "redact_verification"
+    const val REDACT_VERIFICATION_SAVE = "redact_verification_save"
+    const val SANITIZE_SHEET = "sanitize_sheet"
+    const val SANITIZE_CLEAN = "sanitize_clean"
+    const val SANITIZE_SAVE = "sanitize_save"
+    const val SANITIZE_ITEM = "sanitize_item"
+
+    // Task: Compress PDF.
+    const val COMPRESS_SCREEN = "screen_compress"
+    const val COMPRESS_PRESET_LIGHT = "compress_preset_light"
+    const val COMPRESS_PRESET_BALANCED = "compress_preset_balanced"
+    const val COMPRESS_PRESET_STRONG = "compress_preset_strong"
+    const val COMPRESS_PRESET_CUSTOM = "compress_preset_custom"
+    const val COMPRESS_ESTIMATE = "compress_estimate"
+    const val COMPRESS_DPI = "compress_dpi"
+    const val COMPRESS_QUALITY = "compress_quality"
+    const val COMPRESS_START = "compress_start"
+    const val COMPRESS_CANCEL = "compress_cancel"
+    const val COMPRESS_RESULT = "compress_result"
+    const val COMPRESS_SAVE = "compress_save"
+
+    // Task T45: export pages as images and extract embedded images.
+    const val EXPORT_SCREEN = "screen_export_images"
+    const val EXPORT_MODE_PAGES = "export_mode_pages"
+    const val EXPORT_MODE_EMBEDDED = "export_mode_embedded"
+    const val EXPORT_RANGE = "export_range"
+    const val EXPORT_DPI_72 = "export_dpi_72"
+    const val EXPORT_DPI_150 = "export_dpi_150"
+    const val EXPORT_DPI_300 = "export_dpi_300"
+    const val EXPORT_DPI_CUSTOM = "export_dpi_custom"
+    const val EXPORT_FORMAT_PNG = "export_format_png"
+    const val EXPORT_FORMAT_JPG = "export_format_jpg"
+    const val EXPORT_FORMAT_WEBP = "export_format_webp"
+    const val EXPORT_QUALITY = "export_quality"
+    const val EXPORT_MIN_SIZE = "export_min_size"
+    const val EXPORT_KEEP_DUPLICATES = "export_keep_duplicates"
+    const val EXPORT_CHOOSE_FOLDER = "export_choose_folder"
+    const val EXPORT_PROGRESS = "export_progress"
+    const val EXPORT_CANCEL = "export_cancel"
+    const val EXPORT_SUMMARY = "export_summary"
+    const val EXPORT_SHARE = "export_share"
+    const val EXPORT_CONFLICT_REPLACE = "export_conflict_replace"
+    const val EXPORT_CONFLICT_CANCEL = "export_conflict_cancel"
+
+    // Task T44: watermarks, page numbers and Bates numbers.
+    const val MARK_WATERMARK_SCREEN = "screen_mark_watermark"
+    const val MARK_WATERMARK_PREVIEW = "mark_watermark_preview"
+    const val MARK_WATERMARK_TEXT = "mark_watermark_text"
+    const val MARK_WATERMARK_USE_IMAGE = "mark_watermark_use_image"
+    const val MARK_WATERMARK_PICK_IMAGE = "mark_watermark_pick_image"
+    const val MARK_WATERMARK_FONT_SIZE = "mark_watermark_font_size"
+    const val MARK_WATERMARK_OPACITY = "mark_watermark_opacity"
+    const val MARK_WATERMARK_ROTATION = "mark_watermark_rotation"
+    const val MARK_WATERMARK_BEHIND = "mark_watermark_behind"
+    const val MARK_WATERMARK_APPLY = "mark_watermark_apply"
+    const val MARK_WATERMARK_SAVE = "mark_watermark_save"
+    const val MARK_WATERMARK_REMOVE = "mark_watermark_remove"
+    const val MARK_WATERMARK_RANGE = "mark_watermark_range"
+
+    const val MARK_NUMBERS_SCREEN = "screen_mark_numbers"
+    const val MARK_NUMBERS_PREVIEW = "mark_numbers_preview"
+    const val MARK_NUMBERS_HEADER = "mark_numbers_header"
+    const val MARK_NUMBERS_FOOTER = "mark_numbers_footer"
+    const val MARK_NUMBERS_FONT_SIZE = "mark_numbers_font_size"
+    const val MARK_NUMBERS_MARGIN_TOP = "mark_numbers_margin_top"
+    const val MARK_NUMBERS_MARGIN_BOTTOM = "mark_numbers_margin_bottom"
+    const val MARK_NUMBERS_MARGIN_LEFT = "mark_numbers_margin_left"
+    const val MARK_NUMBERS_MARGIN_RIGHT = "mark_numbers_margin_right"
+    const val MARK_NUMBERS_START = "mark_numbers_start"
+    const val MARK_NUMBERS_SKIP_FIRST = "mark_numbers_skip_first"
+    const val MARK_NUMBERS_APPLY = "mark_numbers_apply"
+    const val MARK_NUMBERS_SAVE = "mark_numbers_save"
+    const val MARK_NUMBERS_REMOVE = "mark_numbers_remove"
+    const val MARK_NUMBERS_RANGE = "mark_numbers_range"
+
+    const val MARK_BATES_SCREEN = "screen_mark_bates"
+    const val MARK_BATES_PREVIEW = "mark_bates_preview"
+    const val MARK_BATES_PREFIX = "mark_bates_prefix"
+    const val MARK_BATES_SUFFIX = "mark_bates_suffix"
+    const val MARK_BATES_DIGITS = "mark_bates_digits"
+    const val MARK_BATES_START = "mark_bates_start"
+    const val MARK_BATES_FONT_SIZE = "mark_bates_font_size"
+    const val MARK_BATES_APPLY = "mark_bates_apply"
+    const val MARK_BATES_SAVE = "mark_bates_save"
+    const val MARK_BATES_REMOVE = "mark_bates_remove"
+    const val MARK_BATES_RANGE = "mark_bates_range"
+
     fun toolCard(id: String): String = "tool_card_$id"
+
+    fun redactTool(tool: String): String = "redact_tool_$tool"
+
+    fun redactMark(id: Long): String = "redact_mark_$id"
+
+    fun redactPage(pageIndex: Int): String = "redact_page_$pageIndex"
+
+    fun redactFindMatch(index: Int): String = "redact_find_match_$index"
+
+    fun sanitizeItem(id: String): String = "sanitize_item_$id"
 
     fun viewerToolItem(id: String): String = "viewer_tool_item_$id"
 
@@ -124,4 +235,14 @@ object UiTags {
     fun settingsSavedSignature(id: String): String = "settings_saved_signature_$id"
 
     fun settingsCertificate(id: String): String = "settings_certificate_$id"
+
+    fun markColor(name: String): String = "mark_color_$name"
+
+    fun markWatermarkPosition(name: String): String = "mark_watermark_position_$name"
+
+    fun markNumberFormat(name: String): String = "mark_number_format_$name"
+
+    fun markAlign(name: String): String = "mark_align_$name"
+
+    fun markBatesPlacement(name: String): String = "mark_bates_placement_$name"
 }

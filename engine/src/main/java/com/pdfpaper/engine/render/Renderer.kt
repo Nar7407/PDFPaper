@@ -59,9 +59,10 @@ interface Renderer {
     fun strokePath(path: PdfPath, matrix: PdfMatrix, color: PdfColor, alpha: Double, lineStyle: LineStyle)
 
     /**
-     * Image XObject in the unit square of image space (§8.9.5.2). Stencil
-     * masks ([RasterImage.stencil]) are painted in [fillColor]; ordinary
-     * images ignore it.
+     * Image XObject in the unit square of image space (§8.9.5.2): (0,0) is the
+     * top-left sample row and y grows down, so bitmap row 0 is drawn at y=0.
+     * Stencil masks ([RasterImage.stencil]) are painted in [fillColor];
+     * ordinary images ignore it.
      */
     fun drawImage(image: RasterImage, matrix: PdfMatrix, fillColor: PdfColor, alpha: Double)
 

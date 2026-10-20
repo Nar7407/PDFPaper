@@ -56,6 +56,44 @@ class PdfDocumentBuilder(val version: String = PdfWriter.DEFAULT_VERSION) {
 
     fun entries(): Map<Int, PdfObject> = objects
 
+    /**
+     * Drops every body that cannot be reached from the trailer roots. Object
+     * numbers are not compacted (the cross-reference table simply has free
+     * entries), so references allocated earlier stay valid.
+     *
+     * This is used by privacy-sensitive rewrites: annotations, pages and
+     * resources that were removed from the visible graph must not survive as
+     * unreachable payload in the file.
+     */
+    fun pruneUnreachable(): Int {
+        val rootRef = root ?: return 0
+        val before = objects.size
+        val reachable = HashSet<Int>()
+        val stack = ArrayDeque<Int>()
+
+        fun mark(ref: PdfRef) {
+            if (reachable.add(ref.objNum)) stack.addLast(ref.objNum)
+        }
+
+        fun visit(obj: PdfObject?) {
+            when (obj) {
+                null -> {}
+                is PdfRef -> mark(obj)
+                is PdfArray -> for (item in obj.items) visit(item)
+                is PdfDict -> for (value in obj.entries.values) visit(value)
+                is PdfStream -> for (value in obj.dict.entries.values) visit(value)
+                else -> {}
+            }
+        }
+
+        mark(rootRef)
+        info?.let { mark(it) }
+        id?.let { visit(it) }
+        while (stack.isNotEmpty()) visit(objects[stack.removeLast()])
+        objects.keys.retainAll(reachable)
+        return before - objects.size
+    }
+
     /** Serialises the document; throws if /Root was never set. */
     fun build(): ByteArray {
         val rootRef = root ?: error("Cannot build a PDF without a /Root")

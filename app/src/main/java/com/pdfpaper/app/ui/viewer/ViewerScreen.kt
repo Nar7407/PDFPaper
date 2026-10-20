@@ -194,6 +194,8 @@ fun ViewerScreen(
     onNewPdf: () -> Unit = {},
     onScan: () -> Unit = {},
     onOpenSettings: () -> Unit = {},
+    /** Opens a document tool (compress, watermark, page numbers, Bates) for [path]. */
+    onOpenTool: (toolId: String, path: String) -> Unit = { _, _ -> },
     viewModel: ViewerViewModel = viewModel()
 ) {
     val state by viewModel.state.collectAsState()
@@ -434,6 +436,10 @@ fun ViewerScreen(
                     viewModel.startViewerTool(tool.viewerTool ?: "select")
                     activeToolId = tool.id
                 }
+                ToolSection.REDACT ->
+                    // UI-4 is still being built; the redact screens are not
+                    // wired into the viewer yet.
+                    viewModel.showMessage("${tool.name} is coming soon")
                 ToolSection.FORMS_SECURITY ->
                     if (tool.id == "fill-form") {
                         toolAnnotationStart = edit.annotations.size
@@ -449,6 +455,10 @@ fun ViewerScreen(
                     "scan" -> onScan()
                     "save", "save-as" -> viewModel.saveAll()
                     "share" -> sharePdf(context, path, state.displayName)
+                    // The document is already open, so these tools can work on
+                    // it straight away.
+                    "compress", "watermark", "page-numbers", "bates", "export-images" ->
+                        onOpenTool(tool.id, path)
                     else -> viewModel.showMessage("${tool.name} is coming soon")
                 }
             }

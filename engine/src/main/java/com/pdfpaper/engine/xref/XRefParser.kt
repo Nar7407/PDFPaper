@@ -1,6 +1,11 @@
 package com.pdfpaper.engine.xref
 
+import com.pdfpaper.engine.filter.decodeFilterChain
 import com.pdfpaper.engine.io.RandomAccessSource
+import com.pdfpaper.engine.model.PdfArray
+import com.pdfpaper.engine.model.PdfDict
+import com.pdfpaper.engine.model.PdfName
+import com.pdfpaper.engine.model.parseDirectObject
 import java.nio.charset.StandardCharsets
 
 /** One parsed xref section (classic table §7.5.4 or xref stream §7.5.8) plus its trailer. */
@@ -128,8 +133,50 @@ internal object XRefParser {
         }
     }
 
-    /** Cross-reference stream (§7.5.8). Filtered streams await T4/T5; only direct
-     *  /Length and unfiltered data are supported here (filtered -> null). */
+    /**
+     * Undoes the filter chain of a cross-reference stream (ISO 32000-1, §7.5.8).
+     * The chain is read from the raw dictionary text, because the
+     * cross-reference section is parsed before the object model exists.
+     */
+    private fun decodeXrefData(encoded: ByteArray, dict: Map<String, String>): ByteArray? {
+        val filterText = dict["Filter"]?.trim().orEmpty()
+        if (filterText.isEmpty()) return encoded
+        val names = filterNamesFromRaw(filterText) ?: return null
+        if (names.isEmpty()) return encoded
+        val params = decodeParamsFromRaw(dict["DecodeParms"])
+        if (params == null) return null
+        return decodeFilterChain(encoded, names, params).bytes
+    }
+
+    /** The filter names of a raw dictionary value ("/FlateDecode" or an array). */
+    private fun filterNamesFromRaw(text: String): List<String>? {
+        val parsed = parseDirectObject(text.toByteArray(StandardCharsets.ISO_8859_1)).getOrNull()
+            ?: return null
+        return when (parsed) {
+            is PdfName -> listOf(parsed.name)
+            is PdfArray -> parsed.items.map { item ->
+                (item as? PdfName)?.name ?: return null
+            }
+            else -> null
+        }
+    }
+
+    /** The filter parameters of a raw dictionary value, one per filter. */
+    private fun decodeParamsFromRaw(text: String?): List<PdfDict?>? {
+        val raw = text?.trim().orEmpty()
+        if (raw.isEmpty()) return emptyList()
+        val parsed = parseDirectObject(raw.toByteArray(StandardCharsets.ISO_8859_1)).getOrNull() ?: return null
+        return when (parsed) {
+            is PdfDict -> listOf(parsed)
+            is PdfArray -> parsed.items.map { item -> item as? PdfDict }
+            else -> null
+        }
+    }
+
+    /**
+     * Cross-reference stream (§7.5.8): the entries live in the stream data,
+     * which is usually Flate-compressed and can carry a filter chain.
+     */
     private fun parseXRefStream(
         source: RandomAccessSource,
         sectionOffset: Long,
@@ -168,8 +215,12 @@ internal object XRefParser {
         if (size < 0) return null
         val ranges = indexRaw?.chunked(2)?.map { it[0] to it[1] } ?: listOf(0 to size)
         val totalEntries = ranges.sumOf { it.second }
-        if (totalEntries < 0 || totalEntries.toLong() * width > length) return null
-        val data = source.read(dataStart, totalEntries * width)
+        if (totalEntries < 0) return null
+        val encoded = source.read(dataStart, length)
+        if (encoded.size < length) return null
+        // A cross-reference stream is normally Flate-compressed; the entries
+        // are only readable after the filter chain has been undone.
+        val data = decodeXrefData(encoded, dict) ?: return null
         if (data.size < totalEntries * width) return null
         val entries = LinkedHashMap<Int, XRefEntry>()
         var p = 0
@@ -180,12 +231,16 @@ internal object XRefParser {
                 val field2 = getUInt(data, p + widths[0], widths[1])
                 val field3 = getUInt(data, p + widths[0] + widths[1], widths[2])
                 entries[objNum] = when (type) {
+                    // ISO 32000-1, Table 18: type 1 means "stored in an object
+                    // stream" (field 2 = the stream, field 3 = the index), type 2
+                    // means "a plain object" (field 2 = the byte offset, field 3
+                    // = the generation).
                     0 -> XRefEntry(objNum, field3.toInt(), 0L, EntryKind.FREE)
-                    1 -> XRefEntry(objNum, field3.toInt(), field2, EntryKind.UNCOMPRESSED)
-                    2 -> XRefEntry(
-                        objNum, -1, -1L, EntryKind.COMPRESSED,
+                    1 -> XRefEntry(
+                        objNum, 0, 0L, EntryKind.COMPRESSED,
                         field2.toInt(), field3.toInt()
                     )
+                    2 -> XRefEntry(objNum, field3.toInt(), field2, EntryKind.UNCOMPRESSED)
                     else -> return null
                 }
                 objNum++

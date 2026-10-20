@@ -14,8 +14,13 @@ usage() {
     echo "       cli comments list|add|reply|set-status ..." >&2
     echo "       cli stamp list|add ..." >&2
     echo "       cli sign-visual <in.pdf> --page N --image|--typed|--strokes ... --x X --y Y --width W --out <out.pdf>" >&2
+    echo "       cli sign <in.pdf> --p12 <key.p12> --pass-env <ENV> [--rect l,b,r,t] --out <out.pdf>" >&2
     echo "       cli signatures verify <file.pdf> [--truststore <pem-or-keystore>] [--password <pw>]" >&2
     echo "       cli ocr <file.pdf> [--lang eng+hin] [--out <out.pdf>] [--pages 1,3-5] [--text <words>]" >&2
+    echo "       cli compress <in.pdf> --preset <light|balanced|strong> --out <out.pdf> [--dpi <n>] [--quality <n>] [--grayscale]" >&2
+    echo "       cli mark watermark|number-pages|bates <in.pdf> --out <out.pdf> [...]" >&2
+    echo "       cli export-images <in.pdf> --out-dir <dir> [--dpi 150] [--pages 1-5] [--format png|jpg|webp]" >&2
+    echo "       cli extract-images <in.pdf> --out-dir <dir> [--min-size 32] [--list]" >&2
     exit 2
 }
 
@@ -50,11 +55,23 @@ case "$1" in
     sign-visual)
         exec "$root/gradlew" -q :engine:signvisual --args="$*"
         ;;
+    sign)
+        exec "$root/gradlew" -q :signatures:sign --args="$*"
+        ;;
     signatures)
         exec "$root/gradlew" -q :signatures:verify --args="$*"
         ;;
     ocr)
         exec "$root/gradlew" -q :engine:ocr --args="$*"
+        ;;
+    compress)
+        exec "$root/gradlew" -q :render-jvm:compress --args="$*"
+        ;;
+    mark)
+        exec "$root/gradlew" -q :engine:mark --args="$*"
+        ;;
+    export-images|extract-images)
+        exec "$root/gradlew" -q :render-jvm:export --args="$*"
         ;;
     *)
         usage

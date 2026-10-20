@@ -23,12 +23,43 @@ import com.pdfpaper.engine.model.PdfStream
  *  - unsupported /Encoding on a Type0 font → per-CID replacement mapping,
  *  - missing /ToUnicode → Identity-H/V codes read as Unicode (best effort).
  */
+/**
+ * Structural diagnosis of one font dictionary, used by the `cli fontinfo`
+ * command and to make degradation warnings name the missing item. [reasons]
+ * is the authoritative list: a font is degraded exactly when it is non-empty.
+ */
+class FontDiagnostics(
+    /** Raw /Subtype, e.g. "Type1", "TrueType" or "Type0"; null when absent. */
+    val subtype: String?,
+    /** Raw /BaseFont, preserving the "ABCDEF+" subset prefix. */
+    val baseFont: String?,
+    /** /Encoding name, or a short description for dictionary encodings. */
+    val encoding: String?,
+    /** True when /Widths exists and resolves to an array (simple fonts). */
+    val hasWidths: Boolean,
+    /** "absent", "direct array", "indirect N 0 R" or "unresolved N 0 R". */
+    val widthsKind: String,
+    /** True when /W exists on the descendant CIDFont (Type0 fonts). */
+    val hasW: Boolean,
+    /** "absent", "direct array", "indirect N 0 R" or "unresolved N 0 R". */
+    val wKind: String,
+    /** True when the font dictionary has a /ToUnicode entry (readable or not). */
+    val hasToUnicode: Boolean,
+    /** Present /FontFile, /FontFile2 and /FontFile3 keys, e.g. ["/FontFile2"]. */
+    val fontFiles: List<String>,
+    /** Exact degradation reasons, e.g. "missing /Widths" or "unsupported CMap X". */
+    val reasons: List<String>
+)
+
 sealed interface PdfFont {
     /** /BaseFont name, e.g. "Helvetica" or "ABCDEF+Calibri"; null when absent. */
     val name: String?
 
+    /** Structural details and the exact reasons for degradation. */
+    val diagnostics: FontDiagnostics
+
     /** True when something was unrecoverable (never fatal, extraction continues). */
-    val degraded: Boolean
+    val degraded: Boolean get() = diagnostics.reasons.isNotEmpty()
 
     /**
      * Embedded font program bytes (/FontFile, /FontFile2, /FontFile3, §9.8)
@@ -56,7 +87,7 @@ class PdfSimpleFont internal constructor(
     private val differences: Map<Int, String>,
     private val base: Encodings.Base?,
     private val widths1000: Map<Int, Long>,
-    override val degraded: Boolean,
+    override val diagnostics: FontDiagnostics,
     override val embeddedProgram: ByteArray? = null,
     override val embeddedFormat: String? = null
 ) : PdfFont {
@@ -119,7 +150,7 @@ class PdfType0Font internal constructor(
     private val defaultWidth1000: Long,
     /** True when the predefined CMap is not one we implement. */
     val unsupportedEncoding: Boolean,
-    override val degraded: Boolean,
+    override val diagnostics: FontDiagnostics,
     override val embeddedProgram: ByteArray? = null,
     override val embeddedFormat: String? = null
 ) : PdfFont {
@@ -177,13 +208,26 @@ internal val FALLBACK_FONT: PdfSimpleFont = PdfSimpleFont(
     differences = emptyMap(),
     base = Encodings.Base.WIN_ANSI,
     widths1000 = emptyMap(),
-    degraded = true
+    diagnostics = FontDiagnostics(
+        subtype = null,
+        baseFont = null,
+        encoding = "WinAnsi",
+        hasWidths = false,
+        widthsKind = "absent",
+        hasW = false,
+        wKind = "absent",
+        hasToUnicode = false,
+        fontFiles = emptyList(),
+        reasons = listOf("font resource missing or unusable")
+    )
 )
 
 /** Resolves a font dictionary (or a ref to one) into an extraction [PdfFont]. */
 object FontResolver {
 
     private val SUPPORTED_CID_CMAPS = setOf("Identity-H", "Identity-V")
+    private val SUPPORTED_ENCODINGS =
+        setOf("StandardEncoding", "WinAnsiEncoding", "MacRomanEncoding", "PDFDocEncoding")
 
     /** Names of the predefined CMaps we deliberately do not ship (encoding name kept raw). */
     fun supportsCMap(name: String?): Boolean = name in SUPPORTED_CID_CMAPS
@@ -196,18 +240,39 @@ object FontResolver {
             else -> null
         } ?: return null
 
-        val baseFontName = (dict["BaseFont"] as? PdfName)?.let {
-            unescapeSubsetPrefix(it.name)
-        }
+        val rawBaseFont = (dict["BaseFont"] as? PdfName)?.name
+        val baseFontName = rawBaseFont?.let(::unescapeSubsetPrefix)
         val toUnicode = loadToUnicode(dict["ToUnicode"], doc)
 
         val subtype = (dict["Subtype"] as? PdfName)?.name
         return when (subtype) {
-            "Type0" -> type0Font(dict, baseFontName, toUnicode, doc)
+            "Type0" -> type0Font(dict, baseFontName, rawBaseFont, toUnicode, doc)
             "Type1", "Type3", "TrueType", "MMType1", "CIDFontType0", "CIDFontType2",
-            null -> simpleFont(dict, baseFontName, toUnicode, subtype, loadEmbedded(dict, doc))
-            else -> simpleFont(dict, baseFontName, toUnicode, subtype, loadEmbedded(dict, doc))
+            null -> simpleFont(dict, baseFontName, rawBaseFont, toUnicode, subtype, loadEmbedded(dict, doc), doc)
+            else -> simpleFont(dict, baseFontName, rawBaseFont, toUnicode, subtype, loadEmbedded(dict, doc), doc)
         }
+    }
+
+    private fun resolveValue(raw: PdfObject?, doc: PdfDocument): PdfObject? =
+        if (raw is PdfRef) doc.resolve(raw) else raw
+
+    /** Human-readable storage kind for the diagnostics and the CLI. */
+    private fun objectKind(raw: PdfObject?, resolved: PdfObject?): String = when {
+        raw == null -> "absent"
+        raw is PdfRef && resolved == null -> "unresolved ${raw.objNum} ${raw.gen} R"
+        raw is PdfRef -> "indirect ${raw.objNum} ${raw.gen} R"
+        resolved is PdfArray -> "direct array"
+        resolved is PdfDict -> "direct dictionary"
+        else -> "invalid"
+    }
+
+    /** /FontFile* keys actually present on the font descriptor (§9.8). */
+    private fun fontFileKeys(owner: PdfDict, doc: PdfDocument): List<String> {
+        val descriptor = asDict(owner["FontDescriptor"], doc)
+        val keys = listOf("FontFile", "FontFile2", "FontFile3")
+        return keys.filter { key ->
+            descriptor?.get(key) != null || owner[key] != null
+        }.map { "/$it" }
     }
 
     /**
@@ -267,11 +332,13 @@ object FontResolver {
     private fun simpleFont(
         dict: PdfDict,
         baseFontName: String?,
+        rawBaseFont: String?,
         toUnicode: Map<Int, String>?,
         subtype: String?,
-        embedded: Pair<ByteArray, String>?
+        embedded: Pair<ByteArray, String>?,
+        doc: PdfDocument
     ): PdfSimpleFont {
-        var degraded = false
+        val reasons = ArrayList<String>()
 
         // --- Encoding (§9.6.6) ------------------------------------------
         var base: Encodings.Base? = when (subtype) {
@@ -281,55 +348,87 @@ object FontResolver {
         // An absent /Encoding key: keep the default above. Any /Encoding
         // (name or dict) replaces it; unknown names fall back to Standard.
         var differences = emptyMap<Int, String>()
-        when (val enc = dict["Encoding"]) {
-            null -> {}
+        val encodingRaw = dict["Encoding"]
+        val encodingObj = resolveValue(encodingRaw, doc)
+        var encodingLabel: String? = null
+        when (val enc = encodingObj) {
+            null -> if (encodingRaw != null) {
+                encodingLabel = "invalid"
+                reasons += "invalid /Encoding"
+            }
             is PdfName -> {
+                encodingLabel = enc.name
                 base = Encodings.byName(name = enc.name)
-                if (enc.name !in setOf("StandardEncoding", "WinAnsiEncoding", "MacRomanEncoding", "PDFDocEncoding")) {
-                    degraded = true // e.g. SymbolEncoding: approximated
+                if (enc.name !in SUPPORTED_ENCODINGS) {
+                    reasons += "unsupported encoding /${enc.name}"
                 }
             }
             is PdfDict -> {
-                val baseEnc = (enc["BaseEncoding"] as? PdfName)?.name
+                val baseEnc = (resolveValue(enc["BaseEncoding"], doc) as? PdfName)?.name
                 if (baseEnc != null) {
                     base = Encodings.byName(baseEnc)
-                    if (baseEnc !in setOf("StandardEncoding", "WinAnsiEncoding", "MacRomanEncoding", "PDFDocEncoding")) {
-                        degraded = true
+                    if (baseEnc !in SUPPORTED_ENCODINGS) {
+                        reasons += "unsupported encoding /$baseEnc"
                     }
                 }
-                differences = parseDifferences(enc["Differences"])
+                differences = parseDifferences(enc["Differences"], doc)
+                encodingLabel = buildString {
+                    append("dict")
+                    baseEnc?.let { append(" BaseEncoding=/$it") }
+                    if (enc["Differences"] != null) append(" with /Differences")
+                }
             }
-            else -> degraded = true
+            else -> {
+                encodingLabel = "invalid"
+                reasons += "invalid /Encoding"
+            }
         }
 
         // --- Widths (§9.6.2.2): /Widths + /FirstChar ---------------------
         val widths = HashMap<Int, Long>()
-        val widthsArr = dict["Widths"] as? PdfArray
+        val widthsRaw = dict["Widths"]
+        val widthsObj = resolveValue(widthsRaw, doc)
+        val widthsArr = widthsObj as? PdfArray
         if (widthsArr != null) {
-            val firstChar = ((dict["FirstChar"] as? PdfInteger)?.value ?: 0L)
+            val firstChar = toDouble(resolveValue(dict["FirstChar"], doc))?.toInt() ?: 0
             widthsArr.items.forEachIndexed { i, w ->
-                val value = toDouble(w) ?: return@forEachIndexed
+                val value = toDouble(resolveValue(w, doc)) ?: return@forEachIndexed
                 widths[(firstChar + i).toInt() and 0xFF] = value.toLong()
             }
         } else {
-            degraded = true // no metrics; advances fall back to 0
+            // Word/LibreOffice commonly store /Widths as an indirect array;
+            // resolving it is the difference between real advances and a
+            // whole page of zero-width text.
+            reasons += if (widthsRaw == null) "missing /Widths" else "invalid /Widths"
         }
 
+        val diagnostics = FontDiagnostics(
+            subtype = subtype,
+            baseFont = rawBaseFont,
+            encoding = encodingLabel,
+            hasWidths = widthsArr != null,
+            widthsKind = objectKind(widthsRaw, widthsObj),
+            hasW = false,
+            wKind = "absent",
+            hasToUnicode = dict["ToUnicode"] != null,
+            fontFiles = fontFileKeys(dict, doc),
+            reasons = reasons
+        )
         return PdfSimpleFont(
             name = baseFontName,
             toUnicode = toUnicode,
             differences = differences,
             base = base,
             widths1000 = widths,
-            degraded = degraded,
+            diagnostics = diagnostics,
             embeddedProgram = embedded?.first,
             embeddedFormat = embedded?.second
         )
     }
 
     /** /Differences array: [code name name code name ...] → code → Unicode. */
-    private fun parseDifferences(raw: PdfObject?): Map<Int, String> {
-        val arr = (raw as? PdfArray) ?: return emptyMap()
+    private fun parseDifferences(raw: PdfObject?, doc: PdfDocument): Map<Int, String> {
+        val arr = (resolveValue(raw, doc) as? PdfArray) ?: return emptyMap()
         val out = HashMap<Int, String>()
         var code = -1
         for (item in arr.items) {
@@ -352,30 +451,48 @@ object FontResolver {
     private fun type0Font(
         dict: PdfDict,
         baseFontName: String?,
+        rawBaseFont: String?,
         toUnicode: Map<Int, String>?,
         doc: PdfDocument
     ): PdfType0Font {
-        val encodingName = (dict["Encoding"] as? PdfName)?.name
+        val encodingRaw = dict["Encoding"]
+        val encodingObj = resolveValue(encodingRaw, doc)
+        val encodingName = (encodingObj as? PdfName)?.name
         val unsupported = encodingName != null && !supportsCMap(encodingName)
+        val reasons = ArrayList<String>()
+        if (encodingRaw != null && encodingObj !is PdfName) reasons += "invalid /Encoding"
+        if (unsupported) reasons += "unsupported CMap $encodingName"
 
         // /DescendantFonts [ CIDFont ] (§9.7.5.1): widths live on the CIDFont.
-        val descendant: PdfDict? = (dict["DescendantFonts"] as? PdfArray)?.items
-            ?.firstOrNull()?.let { item ->
-                when (item) {
-                    is PdfDict -> item
-                    is PdfRef -> doc.resolve(item) as? PdfDict
-                    else -> null
-                }
-            }
+        val descendantRaw = (resolveValue(dict["DescendantFonts"], doc) as? PdfArray)?.items
+            ?.firstOrNull()
+        val descendant = when (val item = descendantRaw) {
+            is PdfDict -> item
+            is PdfRef -> doc.resolve(item) as? PdfDict
+            else -> null
+        }
+        if (descendant == null) reasons += "missing /DescendantFonts"
 
         val widths = HashMap<Int, Long>()
-        if (descendant != null) {
-            val wArr = descendant["W"] as? PdfArray
-            if (wArr != null) parseW(wArr, widths)
-        }
-        val dw = descendant?.let { toDouble(it["DW"])?.toLong() } ?: 1000L // §9.7.4.1 default 1000
+        val wRaw = descendant?.get("W")
+        val wObj = resolveValue(wRaw, doc)
+        if (wObj is PdfArray) parseW(wObj, widths)
+        val dw = descendant?.let { toDouble(resolveValue(it["DW"], doc))?.toLong() }
+            ?: 1000L // §9.7.4.1 default 1000
 
         val embedded = descendant?.let { loadEmbedded(it, doc) }
+        val diagnostics = FontDiagnostics(
+            subtype = "Type0",
+            baseFont = rawBaseFont,
+            encoding = encodingName,
+            hasWidths = false,
+            widthsKind = "absent",
+            hasW = wRaw != null,
+            wKind = objectKind(wRaw, wObj),
+            hasToUnicode = dict["ToUnicode"] != null,
+            fontFiles = descendant?.let { fontFileKeys(it, doc) } ?: fontFileKeys(dict, doc),
+            reasons = reasons
+        )
         return PdfType0Font(
             name = baseFontName,
             encodingName = encodingName,
@@ -383,7 +500,7 @@ object FontResolver {
             widths1000 = widths,
             defaultWidth1000 = if (dw in 0..1_000_000) dw else 1000L,
             unsupportedEncoding = unsupported,
-            degraded = descendant == null,
+            diagnostics = diagnostics,
             embeddedProgram = embedded?.first,
             embeddedFormat = embedded?.second
         )
