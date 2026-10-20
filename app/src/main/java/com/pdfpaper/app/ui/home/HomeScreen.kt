@@ -20,6 +20,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.outlined.AddBox
+import androidx.compose.material.icons.outlined.DocumentScanner
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -32,6 +34,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
@@ -47,6 +50,7 @@ import com.pdfpaper.app.ui.tools.ToolRegistry
 @Composable
 fun HomeScreen(
     onOpen: () -> Unit,
+    onNewPdf: () -> Unit,
     onBrowseTools: () -> Unit,
     onBrowseRecent: () -> Unit,
     onOpenTool: (ToolDefinition) -> Unit,
@@ -56,6 +60,7 @@ fun HomeScreen(
     HomeContent(
         state = state,
         onOpen = onOpen,
+        onNewPdf = onNewPdf,
         onBrowseTools = onBrowseTools,
         onBrowseRecent = onBrowseRecent,
         onOpenTool = onOpenTool,
@@ -67,6 +72,7 @@ fun HomeScreen(
 private fun HomeContent(
     state: HomeUiState,
     onOpen: () -> Unit,
+    onNewPdf: () -> Unit,
     onBrowseTools: () -> Unit,
     onBrowseRecent: () -> Unit,
     onOpenTool: (ToolDefinition) -> Unit,
@@ -96,6 +102,27 @@ private fun HomeContent(
 
             Spacer(Modifier.height(24.dp))
             OpenDocumentCard(onOpen = onOpen)
+
+            Spacer(Modifier.height(12.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                QuickCreateCard(
+                    title = "New PDF",
+                    detail = "Blank, images or text",
+                    icon = Icons.Outlined.AddBox,
+                    onClick = onNewPdf,
+                    modifier = Modifier.weight(1f).testTag(UiTags.HOME_NEW_PDF)
+                )
+                QuickCreateCard(
+                    title = "Scan",
+                    detail = "Camera to PDF",
+                    icon = Icons.Outlined.DocumentScanner,
+                    onClick = { onOpenTool(ToolRegistry.byId("scan")!!) },
+                    modifier = Modifier.weight(1f)
+                )
+            }
 
             Spacer(Modifier.height(20.dp))
             Row(
@@ -183,6 +210,50 @@ private fun HomeContent(
                 MessageCard(text = message, onDismiss = onDismissMessages)
             }
             Spacer(Modifier.height(24.dp))
+        }
+    }
+}
+
+@Composable
+private fun QuickCreateCard(
+    title: String,
+    detail: String,
+    icon: ImageVector,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    OutlinedCard(
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        modifier = modifier.clickable(onClick = onClick)
+    ) {
+        Column(Modifier.padding(14.dp)) {
+            Surface(
+                shape = RoundedCornerShape(9.dp),
+                color = MaterialTheme.colorScheme.primaryContainer,
+                modifier = Modifier.size(36.dp)
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        imageVector = icon,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+            }
+            Spacer(Modifier.height(9.dp))
+            Text(
+                title,
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold
+            )
+            Text(
+                detail,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
         }
     }
 }
@@ -308,6 +379,7 @@ private fun HomeScreenLightPreview() {
         HomeContent(
             state = HomeUiState(),
             onOpen = {},
+            onNewPdf = {},
             onBrowseTools = {},
             onBrowseRecent = {},
             onOpenTool = {},

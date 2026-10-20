@@ -13,6 +13,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.outlined.BugReport
+import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -40,6 +41,7 @@ import com.pdfpaper.app.ui.theme.PDFPaperTheme
 fun WorkspaceHeader(
     onOpen: () -> Unit,
     onSearch: () -> Unit,
+    onSettings: () -> Unit = {},
     modifier: Modifier = Modifier,
     onDebug: (() -> Unit)? = null
 ) {
@@ -87,6 +89,12 @@ fun WorkspaceHeader(
                         contentDescription = "Search tools"
                     )
                 }
+                IconButton(onClick = onSettings) {
+                    Icon(
+                        imageVector = Icons.Outlined.Settings,
+                        contentDescription = "Settings"
+                    )
+                }
                 if (onDebug != null) {
                     IconButton(onClick = onDebug) {
                         Icon(
@@ -108,6 +116,6 @@ fun WorkspaceHeader(
 @Composable
 private fun WorkspaceHeaderLightPreview() {
     PDFPaperTheme(darkTheme = false) {
-        WorkspaceHeader(onOpen = {}, onSearch = {}, onDebug = {})
+        WorkspaceHeader(onOpen = {}, onSearch = {}, onSettings = {}, onDebug = {})
     }
 }

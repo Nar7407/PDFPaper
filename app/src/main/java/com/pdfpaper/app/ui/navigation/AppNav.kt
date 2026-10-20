@@ -39,10 +39,15 @@ import com.pdfpaper.app.ui.home.HomeViewModel
 import com.pdfpaper.app.ui.open.OpenDocumentScreen
 import com.pdfpaper.app.ui.pages.PagesScreen
 import com.pdfpaper.app.ui.recent.RecentScreen
+import com.pdfpaper.app.ui.scan.ScanScreen
+import com.pdfpaper.app.ui.settings.SettingsScreen
 import com.pdfpaper.app.ui.tools.InfoScreen
+import com.pdfpaper.app.ui.tools.ToolDefinition
+import com.pdfpaper.app.ui.tools.ToolDestination
 import com.pdfpaper.app.ui.tools.ToolRegistry
 import com.pdfpaper.app.ui.tools.ToolDetailScreen
 import com.pdfpaper.app.ui.tools.ToolsScreen
+import com.pdfpaper.app.ui.newpdf.NewPdfScreen
 import com.pdfpaper.app.ui.viewer.ViewerScreen
 
 object Routes {
@@ -54,6 +59,9 @@ object Routes {
     const val PAGES = "pages"
     const val INFO = "info"
     const val OPEN = "open"
+    const val NEW_PDF = "new-pdf"
+    const val SCAN = "scan"
+    const val SETTINGS = "settings"
 
     fun tool(id: String): String = "tool/${Uri.encode(id)}"
 
@@ -61,10 +69,11 @@ object Routes {
         path: String,
         startInEdit: Boolean = false,
         startWithForms: Boolean = false,
-        startEditTool: String? = null
+        startEditTool: String? = null,
+        startPanel: String? = null
     ): String =
         "$VIEWER?path=${Uri.encode(path)}&edit=$startInEdit&forms=$startWithForms" +
-            "&tool=${Uri.encode(startEditTool.orEmpty())}"
+            "&tool=${Uri.encode(startEditTool.orEmpty())}&panel=${Uri.encode(startPanel.orEmpty())}"
 
     fun pages(path: String, hint: String? = null, tool: String? = null): String {
         val base = "$PAGES?path=${Uri.encode(path)}&tool=${Uri.encode(tool.orEmpty())}"
@@ -112,6 +121,15 @@ fun AppNav(
         }
     }
 
+    /** Shared All tools / Home behaviour: creation routes skip the PDF picker. */
+    fun openTool(tool: ToolDefinition) {
+        when (tool.destination) {
+            ToolDestination.NEW_PDF -> navController.navigate(Routes.NEW_PDF)
+            ToolDestination.SCAN -> navController.navigate(Routes.SCAN)
+            else -> navController.navigate(Routes.tool(tool.id))
+        }
+    }
+
     // A VIEW intent from another app (file manager, mail attachment) enters
     // through the same flow as the picker.
     LaunchedEffect(incomingDocument) {
@@ -126,6 +144,7 @@ fun AppNav(
                 WorkspaceHeader(
                     onOpen = { picker.launch(OfficeKind.PICKER_MIME_TYPES) },
                     onSearch = { navController.navigateTopLevel(Routes.TOOLS) },
+                    onSettings = { navController.navigate(Routes.SETTINGS) },
                     onDebug = if (debuggable) {
                         { showDebugMenu = true }
                     } else {
@@ -151,15 +170,16 @@ fun AppNav(
             composable(Routes.HOME) {
                 HomeScreen(
                     onOpen = { picker.launch(OfficeKind.PICKER_MIME_TYPES) },
+                    onNewPdf = { navController.navigate(Routes.NEW_PDF) },
                     onBrowseTools = { navController.navigateTopLevel(Routes.TOOLS) },
                     onBrowseRecent = { navController.navigateTopLevel(Routes.RECENT) },
-                    onOpenTool = { tool -> navController.navigate(Routes.tool(tool.id)) },
+                    onOpenTool = { tool -> openTool(tool) },
                     viewModel = homeViewModel
                 )
             }
             composable(Routes.TOOLS) {
                 ToolsScreen(
-                    onOpenTool = { tool -> navController.navigate(Routes.tool(tool.id)) }
+                    onOpenTool = { tool -> openTool(tool) }
                 )
             }
             composable(Routes.RECENT) {
@@ -193,6 +213,29 @@ fun AppNav(
                     }
                 )
             }
+            composable(Routes.NEW_PDF) {
+                NewPdfScreen(
+                    onBack = { navController.popBackStack() },
+                    onCreated = { path ->
+                        navController.navigate(Routes.viewer(path)) {
+                            popUpTo(Routes.NEW_PDF) { inclusive = true }
+                        }
+                    }
+                )
+            }
+            composable(Routes.SCAN) {
+                ScanScreen(
+                    onBack = { navController.popBackStack() },
+                    onCreated = { path ->
+                        navController.navigate(Routes.viewer(path)) {
+                            popUpTo(Routes.SCAN) { inclusive = true }
+                        }
+                    }
+                )
+            }
+            composable(Routes.SETTINGS) {
+                SettingsScreen(onBack = { navController.popBackStack() })
+            }
             composable(
                 route = Routes.TOOL,
                 arguments = listOf(
@@ -205,14 +248,14 @@ fun AppNav(
                     onOpenOrganizer = { path, hint ->
                         navController.navigate(Routes.pages(path, hint))
                     },
-                    onOpenViewer = { path, edit, forms, editTool ->
-                        navController.navigate(Routes.viewer(path, edit, forms, editTool))
+                    onOpenViewer = { path, edit, forms, editTool, panel ->
+                        navController.navigate(Routes.viewer(path, edit, forms, editTool, panel))
                     },
                     onOpenInfo = { path -> navController.navigate(Routes.info(path)) }
                 )
             }
             composable(
-                route = "${Routes.VIEWER}?path={path}&edit={edit}&forms={forms}&tool={tool}",
+                route = "${Routes.VIEWER}?path={path}&edit={edit}&forms={forms}&tool={tool}&panel={panel}",
                 arguments = listOf(
                     navArgument("path") {
                         type = NavType.StringType
@@ -229,6 +272,10 @@ fun AppNav(
                     navArgument("tool") {
                         type = NavType.StringType
                         defaultValue = ""
+                    },
+                    navArgument("panel") {
+                        type = NavType.StringType
+                        defaultValue = ""
                     }
                 )
             ) { entry ->
@@ -237,13 +284,17 @@ fun AppNav(
                     startInEditMode = entry.arguments?.getBoolean("edit") ?: false,
                     startWithForms = entry.arguments?.getBoolean("forms") ?: false,
                     startEditTool = entry.arguments?.getString("tool").orEmpty(),
+                    startPanel = entry.arguments?.getString("panel").orEmpty(),
                     onBack = { navController.popBackStack() },
                     onOrganize = { path, toolId ->
                         navController.navigate(
                             Routes.pages(path, ToolRegistry.byId(toolId.orEmpty())?.organizerHint, toolId)
                         )
                     },
-                    onOpenInfo = { path -> navController.navigate(Routes.info(path)) }
+                    onOpenInfo = { path -> navController.navigate(Routes.info(path)) },
+                    onNewPdf = { navController.navigate(Routes.NEW_PDF) },
+                    onScan = { navController.navigate(Routes.SCAN) },
+                    onOpenSettings = { navController.navigate(Routes.SETTINGS) }
                 )
             }
             composable(

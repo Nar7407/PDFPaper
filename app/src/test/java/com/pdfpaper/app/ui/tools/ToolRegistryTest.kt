@@ -13,9 +13,9 @@ class ToolRegistryTest {
             listOf(
                 "rotate", "reorder", "delete", "extract", "insert", "split", "merge",
                 "add-text", "edit-text", "add-image", "edit-image",
-                "highlight", "underline", "draw", "note",
-                "fill-form", "protect",
-                "info", "save", "save-as", "share", "print"
+                "highlight", "underline", "draw", "note", "comments", "stamp",
+                "fill-form", "sign", "signatures", "protect",
+                "new-pdf", "scan", "ocr", "info", "save", "save-as", "share", "print"
             ),
             ToolRegistry.search("  ").map { it.id }
         )
@@ -30,7 +30,7 @@ class ToolRegistryTest {
     @Test
     fun searchMatchesKeywordsAsWellAsTitles() {
         assertEquals(listOf("merge"), ToolRegistry.search("combine").map { it.id })
-        assertEquals(listOf("note"), ToolRegistry.search("sticky").map { it.id })
+        assertEquals(listOf("note", "comments"), ToolRegistry.search("sticky").map { it.id })
         assertEquals(listOf("protect"), ToolRegistry.search("password").map { it.id })
         assertEquals(listOf("fill-form"), ToolRegistry.search("checkbox").map { it.id })
     }
@@ -55,11 +55,23 @@ class ToolRegistryTest {
     }
 
     @Test
-    fun everyViewerToolModeMapsBackToATool() {
+    fun viewerToolsMapBackToATool() {
         assertEquals("highlight", ToolRegistry.byViewerTool("highlight")?.id)
         assertEquals("draw", ToolRegistry.byViewerTool("ink")?.id)
         assertEquals("note", ToolRegistry.byViewerTool("note")?.id)
         assertEquals("add-text", ToolRegistry.byViewerTool("text")?.id)
+    }
+
+    @Test
+    fun newToolsHaveExplicitDestinationsOrViewerPanels() {
+        assertEquals(ToolDestination.NEW_PDF, ToolRegistry.byId("new-pdf")?.destination)
+        assertEquals(ToolDestination.SCAN, ToolRegistry.byId("scan")?.destination)
+        assertEquals("comments", ToolRegistry.byId("comments")?.viewerAction)
+        assertEquals("stamps", ToolRegistry.byId("stamp")?.viewerAction)
+        assertEquals("sign", ToolRegistry.byId("sign")?.viewerAction)
+        assertEquals("signatures", ToolRegistry.byId("signatures")?.viewerAction)
+        assertEquals("ocr", ToolRegistry.byId("ocr")?.viewerAction)
+        assertTrue(ToolRegistry.byId("ocr")!!.isAvailable(demoEngine = false))
     }
 
     @Test

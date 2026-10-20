@@ -6,8 +6,12 @@ import androidx.compose.material.icons.automirrored.outlined.CallSplit
 import androidx.compose.material.icons.automirrored.outlined.FactCheck
 import androidx.compose.material.icons.automirrored.outlined.NoteAdd
 import androidx.compose.material.icons.automirrored.outlined.RotateRight
+import androidx.compose.material.icons.outlined.AddBox
 import androidx.compose.material.icons.outlined.AddPhotoAlternate
+import androidx.compose.material.icons.outlined.Approval
+import androidx.compose.material.icons.outlined.Comment
 import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.DocumentScanner
 import androidx.compose.material.icons.outlined.Draw
 import androidx.compose.material.icons.outlined.EditNote
 import androidx.compose.material.icons.outlined.FileDownload
@@ -23,6 +27,8 @@ import androidx.compose.material.icons.outlined.SaveAs
 import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material.icons.outlined.SwapVert
 import androidx.compose.material.icons.outlined.TextFields
+import androidx.compose.material.icons.outlined.TextSnippet
+import androidx.compose.material.icons.outlined.Verified
 import androidx.compose.ui.graphics.vector.ImageVector
 
 /**
@@ -38,7 +44,7 @@ enum class ToolSection(val label: String) {
 }
 
 /** Where the All tools flow goes after the user chooses a PDF. */
-enum class ToolDestination { ORGANIZER, VIEWER, INFO }
+enum class ToolDestination { ORGANIZER, VIEWER, INFO, NEW_PDF, SCAN }
 
 /**
  * One tool in the registry.
@@ -68,6 +74,8 @@ data class ToolDefinition(
     val organizerHint: String? = null,
     /** Viewer tools: the mode to switch into ("text", "image", "select", "highlight", "ink", "note"). */
     val viewerTool: String? = null,
+    /** Viewer tools: a panel to open instead of a markup mode ("comments", "stamps", "signatures", "ocr"). */
+    val viewerAction: String? = null,
     /** Viewer tools: also open the form-fill panel. */
     val opensForms: Boolean = false,
     /** Where choosing a PDF takes the user (the All tools flow). */
@@ -230,6 +238,24 @@ object ToolRegistry {
             keywords = listOf("comment", "sticky", "stamp", "annotate"),
             viewerTool = "note"
         ),
+        ToolDefinition(
+            id = "comments",
+            name = "Comments",
+            description = "Read, reply to and resolve comments on the page.",
+            icon = Icons.Outlined.Comment,
+            section = ToolSection.ANNOTATE,
+            keywords = listOf("comment", "thread", "reply", "resolve", "review", "sticky note"),
+            viewerAction = "comments"
+        ),
+        ToolDefinition(
+            id = "stamp",
+            name = "Stamps",
+            description = "Place a built-in or custom stamp on a page.",
+            icon = Icons.Outlined.Approval,
+            section = ToolSection.ANNOTATE,
+            keywords = listOf("stamp", "approved", "sign here", "business", "seal", "mark"),
+            viewerAction = "stamps"
+        ),
 
         // ---- Forms & Security ---------------------------------------------
         ToolDefinition(
@@ -242,6 +268,24 @@ object ToolRegistry {
             opensForms = true
         ),
         ToolDefinition(
+            id = "sign",
+            name = "Sign",
+            description = "Add a visual signature or sign with a certificate.",
+            icon = Icons.Outlined.Draw,
+            section = ToolSection.FORMS_SECURITY,
+            keywords = listOf("sign", "signature", "draw", "certificate", "p12", "digital"),
+            viewerAction = "sign"
+        ),
+        ToolDefinition(
+            id = "signatures",
+            name = "Signatures",
+            description = "See who signed and exactly what was checked.",
+            icon = Icons.Outlined.Verified,
+            section = ToolSection.FORMS_SECURITY,
+            keywords = listOf("signature", "signed", "certificate", "verify", "trust", "digital id"),
+            viewerAction = "signatures"
+        ),
+        ToolDefinition(
             id = "protect",
             name = "Protect / Encrypt",
             description = "Password-protect a PDF. Protected files open today; writing encryption is coming soon.",
@@ -252,6 +296,33 @@ object ToolRegistry {
         ),
 
         // ---- Document ------------------------------------------------------
+        ToolDefinition(
+            id = "new-pdf",
+            name = "New PDF",
+            description = "Create a blank PDF, or one from images or text.",
+            icon = Icons.Outlined.AddBox,
+            section = ToolSection.DOCUMENT,
+            keywords = listOf("create", "blank", "images", "text", "new document"),
+            destination = ToolDestination.NEW_PDF
+        ),
+        ToolDefinition(
+            id = "scan",
+            name = "Scan",
+            description = "Capture pages with the camera and save a PDF.",
+            icon = Icons.Outlined.DocumentScanner,
+            section = ToolSection.DOCUMENT,
+            keywords = listOf("camera", "scanner", "capture", "photo", "document"),
+            destination = ToolDestination.SCAN
+        ),
+        ToolDefinition(
+            id = "ocr",
+            name = "Make searchable",
+            description = "Add searchable text to scanned pages on device.",
+            icon = Icons.Outlined.TextSnippet,
+            section = ToolSection.DOCUMENT,
+            keywords = listOf("searchable", "recognition", "scan text", "hindi", "english", "ocr"),
+            viewerAction = "ocr"
+        ),
         ToolDefinition(
             id = "info",
             name = "Info",

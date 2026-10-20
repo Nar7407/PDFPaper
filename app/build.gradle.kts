@@ -102,6 +102,19 @@ dependencies {
     // open-office-files flow so .docx/.pptx can be turned into a PDF on device.
     implementation(project(":convert"))
 
+    // Pure-Kotlin signature validation (JDK JCA + own DER/CMS reader); the
+    // Signatures panel reads its SignatureReport and renders plain language.
+    implementation(project(":signatures"))
+
+    // Task UI-2: on-device scanning and OCR. The scanner UI/models are
+    // downloaded through Google Play services (ML Kit Terms of Service,
+    // ~300 KB app impact); text recognition uses the unbundled Latin and
+    // Devanagari models (~260 KB per script, downloaded on first use).
+    // Chosen by the owner after the license/size question.
+    implementation("com.google.android.gms:play-services-mlkit-document-scanner:16.0.0")
+    implementation("com.google.android.gms:play-services-mlkit-text-recognition:19.0.0")
+    implementation("com.google.android.gms:play-services-mlkit-text-recognition-devanagari:16.0.0")
+
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
 

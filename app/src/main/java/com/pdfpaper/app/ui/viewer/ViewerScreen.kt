@@ -1,5 +1,8 @@
 package com.pdfpaper.app.ui.viewer
 
+import android.app.Activity
+import android.app.KeyguardManager
+import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
@@ -23,6 +26,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
@@ -85,6 +89,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -98,6 +103,7 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.input.pointer.PointerType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalClipboardManager
@@ -116,6 +122,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.pdfpaper.app.data.AppSettings
+import com.pdfpaper.app.data.CustomStampStore
 import com.pdfpaper.app.edit.EditFontFamily
 import com.pdfpaper.app.edit.EditableBounds
 import com.pdfpaper.app.edit.EditableHandle
@@ -143,10 +151,12 @@ import com.pdfpaper.engine.annot.UnderlineSpec
 import com.pdfpaper.engine.form.FieldKind
 import com.pdfpaper.engine.form.PdfField
 import com.pdfpaper.engine.geom.PdfRect
+import com.pdfpaper.engine.links.LinkTarget
 import com.pdfpaper.engine.render.PageBox
 import com.pdfpaper.engine.render.PageRenderPlan
 import com.pdfpaper.engine.text.TextRect
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
@@ -177,9 +187,13 @@ fun ViewerScreen(
     startInEditMode: Boolean = false,
     startWithForms: Boolean = false,
     startEditTool: String? = null,
+    startPanel: String? = null,
     onBack: () -> Unit = {},
     onOrganize: (path: String, toolId: String?) -> Unit = { _, _ -> },
     onOpenInfo: (String) -> Unit = {},
+    onNewPdf: () -> Unit = {},
+    onScan: () -> Unit = {},
+    onOpenSettings: () -> Unit = {},
     viewModel: ViewerViewModel = viewModel()
 ) {
     val state by viewModel.state.collectAsState()
@@ -192,21 +206,50 @@ fun ViewerScreen(
     val objectEdit by viewModel.objectEdit.collectAsState()
     val export by viewModel.export.collectAsState()
     val message by viewModel.message.collectAsState()
+    val comments by viewModel.comments.collectAsState()
+    val commentsLoading by viewModel.commentsLoading.collectAsState()
+    val commentsError by viewModel.commentsError.collectAsState()
+    val commentReplies by viewModel.commentReplies.collectAsState()
+    val commentStatuses by viewModel.commentStatuses.collectAsState()
+    val signatures by viewModel.signatures.collectAsState()
+    val signing by viewModel.signing.collectAsState()
+    val ocr by viewModel.ocr.collectAsState()
 
     var zoom by rememberSaveable { mutableFloatStateOf(1f) }
     var showSearch by rememberSaveable { mutableStateOf(false) }
     var query by rememberSaveable { mutableStateOf("") }
     var showForms by rememberSaveable { mutableStateOf(startWithForms) }
     var noteTarget by remember { mutableStateOf<Triple<Int, Float, Float>?>(null) }
+    var commentTarget by remember { mutableStateOf<Triple<Int, Float, Float>?>(null) }
+    var commentPlacement by remember { mutableStateOf(false) }
     var textTarget by remember { mutableStateOf<TextTarget?>(null) }
     var pendingImageUri by remember { mutableStateOf<Uri?>(null) }
     var replaceImageTarget by remember { mutableStateOf<EditableObject?>(null) }
     var showTools by rememberSaveable { mutableStateOf(false) }
     var activeToolId by rememberSaveable { mutableStateOf<String?>(null) }
+    var showComments by rememberSaveable { mutableStateOf(false) }
+    var showStamps by rememberSaveable { mutableStateOf(false) }
+    var showSignatures by rememberSaveable { mutableStateOf(false) }
+    var showOcr by rememberSaveable { mutableStateOf(false) }
+    var showSignOptions by rememberSaveable { mutableStateOf(false) }
+    var showVisualSignature by rememberSaveable { mutableStateOf(false) }
+    var showDigitalSignature by rememberSaveable { mutableStateOf(false) }
+    var signaturePlacement by remember { mutableStateOf<SignaturePlacementUi?>(null) }
+    var pendingSignature by remember { mutableStateOf<PendingSignature?>(null) }
+    // Device-lock confirmation: a pending signing action waits for the system
+    // credential screen, or for the explicit fallback when no lock is set.
+    var pendingDeviceAction by remember { mutableStateOf<(() -> Unit)?>(null) }
+    var showDeviceFallback by remember { mutableStateOf(false) }
+    var stampPlacement by remember { mutableStateOf<StampPlacement?>(null) }
+    var linkCard by remember { mutableStateOf<LinkCardRequest?>(null) }
+    var pinnedLink by remember { mutableStateOf<LinkTarget?>(null) }
+    var externalLink by remember { mutableStateOf<ExternalLinkRequest?>(null) }
+    var linkBackStack by remember { mutableStateOf<List<ReadingPosition>>(emptyList()) }
     // Annotation count when the current tool opened, so Cancel can undo its work.
     var toolAnnotationStart by remember { mutableIntStateOf(0) }
 
     val context = LocalContext.current
+    val author = AppSettings.authorName(context)
     val demoEngine = EditingRuntime.isDemo(context)
     val activeToolName = activeToolId?.let { ToolRegistry.byId(it)?.name }
 
@@ -250,6 +293,7 @@ fun ViewerScreen(
     val hScroll = rememberScrollState()
     val snackbar = remember { SnackbarHostState() }
     val clipboard = LocalClipboardManager.current
+    val scope = rememberCoroutineScope()
 
     val createDocument = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("application/pdf")
@@ -257,7 +301,48 @@ fun ViewerScreen(
         if (uri != null) viewModel.completeExport(uri) else viewModel.cancelExport()
     }
 
+    val keyguard = remember(context) {
+        context.getSystemService(KeyguardManager::class.java)
+    }
+    val deviceCredentialLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        val action = pendingDeviceAction
+        pendingDeviceAction = null
+        if (result.resultCode == Activity.RESULT_OK) {
+            action?.invoke()
+        } else {
+            viewModel.showMessage("Signing was not confirmed")
+        }
+    }
+    fun confirmWithDeviceLock(action: () -> Unit) {
+        val intent = runCatching {
+            keyguard?.createConfirmDeviceCredentialIntent(
+                "Confirm signing",
+                "Unlock to sign this PDF"
+            )
+        }.getOrNull()
+        if (intent == null) {
+            pendingDeviceAction = action
+            showDeviceFallback = true
+        } else {
+            pendingDeviceAction = action
+            deviceCredentialLauncher.launch(intent)
+        }
+    }
+
     LaunchedEffect(path) { viewModel.load(path) }
+    LaunchedEffect(path) {
+        linkCard = null
+        pinnedLink = null
+        externalLink = null
+        linkBackStack = emptyList()
+        pendingSignature = null
+        signaturePlacement = null
+        showSignOptions = false
+        showVisualSignature = false
+        showDigitalSignature = false
+    }
     LaunchedEffect(path, startInEditMode, startWithForms, startEditTool, state.isLoading, state.pageCount) {
         if (startInEditMode && !state.isLoading && state.error == null && state.pageCount > 0) {
             if (startEditTool.isNullOrBlank()) {
@@ -267,6 +352,26 @@ fun ViewerScreen(
                 activeToolId = ToolRegistry.byViewerTool(startEditTool)?.id
             }
             if (startWithForms) showForms = true
+        }
+    }
+    // An All tools entry can ask the viewer to open a panel directly.
+    var openedStartPanel by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(startPanel, state.isLoading, state.pageCount) {
+        if (openedStartPanel || state.isLoading || state.error != null ||
+            state.pageCount <= 0 || startPanel.isNullOrBlank()
+        ) {
+            return@LaunchedEffect
+        }
+        openedStartPanel = true
+        when (startPanel) {
+            "comments" -> showComments = true
+            "stamps" -> showStamps = true
+            "signatures" -> {
+                showSignatures = true
+                viewModel.loadSignatures()
+            }
+            "ocr" -> showOcr = true
+            "sign" -> showSignOptions = true
         }
     }
     LaunchedEffect(message) {
@@ -299,42 +404,174 @@ fun ViewerScreen(
     // session added. Either way the viewer leaves edit mode.
     val closeTool = {
         activeToolId = null
+        commentPlacement = false
         viewModel.setEditMode(false)
     }
     val cancelTool = {
         viewModel.trimAnnotationsTo(toolAnnotationStart)
         activeToolId = null
+        commentPlacement = false
         viewModel.setEditMode(false)
     }
     val activateTool: (ToolDefinition) -> Unit = { tool ->
         showTools = false
-        when (tool.section) {
-            ToolSection.PAGES -> onOrganize(path, tool.id)
-            ToolSection.EDIT, ToolSection.ANNOTATE -> {
-                toolAnnotationStart = edit.annotations.size
-                viewModel.startViewerTool(tool.viewerTool ?: "select")
-                activeToolId = tool.id
+        when (tool.viewerAction) {
+            "comments" -> showComments = true
+            "stamps" -> showStamps = true
+            "signatures" -> {
+                showSignatures = true
+                viewModel.loadSignatures()
             }
-            ToolSection.FORMS_SECURITY ->
-                if (tool.id == "fill-form") {
+            "ocr" -> showOcr = true
+            "sign" -> {
+                closeTool()
+                showSignOptions = true
+            }
+            else -> when (tool.section) {
+                ToolSection.PAGES -> onOrganize(path, tool.id)
+                ToolSection.EDIT, ToolSection.ANNOTATE -> {
                     toolAnnotationStart = edit.annotations.size
-                    viewModel.startViewerTool("select")
-                    showForms = true
+                    viewModel.startViewerTool(tool.viewerTool ?: "select")
                     activeToolId = tool.id
-                } else {
-                    viewModel.showMessage("${tool.name} is coming soon")
                 }
-            ToolSection.DOCUMENT -> when (tool.id) {
-                "info" -> onOpenInfo(path)
-                "save", "save-as" -> viewModel.saveAll()
-                "share" -> sharePdf(context, path, state.displayName)
-                else -> viewModel.showMessage("${tool.name} is coming soon")
+                ToolSection.FORMS_SECURITY ->
+                    if (tool.id == "fill-form") {
+                        toolAnnotationStart = edit.annotations.size
+                        viewModel.startViewerTool("select")
+                        showForms = true
+                        activeToolId = tool.id
+                    } else {
+                        viewModel.showMessage("${tool.name} is coming soon")
+                    }
+                ToolSection.DOCUMENT -> when (tool.id) {
+                    "info" -> onOpenInfo(path)
+                    "new-pdf" -> onNewPdf()
+                    "scan" -> onScan()
+                    "save", "save-as" -> viewModel.saveAll()
+                    "share" -> sharePdf(context, path, state.displayName)
+                    else -> viewModel.showMessage("${tool.name} is coming soon")
+                }
             }
         }
     }
+
+    // ------------------------------------------------------ links (T36/T61)
+
+    // Annotation, stylus, selection and form modes own the tap. The stylus
+    // check lives in wordSelectionGestures so link taps stay finger-only.
+    val linkTapEnabled = !edit.active &&
+        !showForms &&
+        selection == null &&
+        activeToolId == null &&
+        stampPlacement == null &&
+        signaturePlacement == null &&
+        pendingSignature == null &&
+        !commentPlacement
+
+    val jumpToLink: (LinkTarget) -> Unit = { target ->
+        if (target.pageIndex !in 0 until state.pageCount) {
+            viewModel.showMessage("That target is outside this document")
+        } else {
+            linkBackStack = pushPosition(
+                linkBackStack,
+                ReadingPosition(
+                    pageIndex = listState.firstVisibleItemIndex,
+                    offsetPx = listState.firstVisibleItemScrollOffset,
+                    horizontalPx = hScroll.value
+                )
+            )
+            linkCard = null
+            val measured = listState.layoutInfo.visibleItemsInfo
+                .firstOrNull { it.index == target.pageIndex }
+                ?.size
+            val horizontalPadding = with(density) { 16.dp.toPx() }
+            val verticalPadding = with(density) { 12.dp.toPx() }
+            val pageWidth = (with(density) { contentWidth.toPx() } - horizontalPadding)
+                .coerceAtLeast(1f)
+            val box = boxes.getOrNull(target.pageIndex)
+            val aspect = if (box != null && box.rotatedWidth > 0.0 && box.rotatedHeight > 0.0) {
+                (box.rotatedWidth / box.rotatedHeight).toFloat()
+            } else {
+                612f / 792f
+            }
+            val rowHeight = measured
+                ?: ((pageWidth / aspect) + verticalPadding).roundToInt()
+            val viewport = listState.layoutInfo.viewportSize.height
+            val offset = linkScrollOffset(target.pageFractionTop, rowHeight, viewport)
+            scope.launch {
+                listState.animateScrollToItem(target.pageIndex, offset)
+            }
+        }
+    }
+
+    val restoreReadingPosition = {
+        val (position, remaining) = popPosition(linkBackStack)
+        if (position != null) {
+            linkBackStack = remaining
+            scope.launch {
+                listState.animateScrollToItem(position.pageIndex, position.offsetPx)
+                hScroll.scrollTo(position.horizontalPx)
+            }
+        }
+    }
+
+    val onLinkTap: (Int, Float, Float) -> Boolean = { index, fx, fy ->
+        var handled = false
+        if (linkTapEnabled) {
+            val link = viewModel.linkAtFraction(index, fx, fy)
+            if (link != null) {
+                handled = true
+                val uri = link.uri
+                val file = link.file
+                when {
+                    uri != null -> externalLink = ExternalLinkRequest(uri = uri)
+                    file != null -> externalLink = ExternalLinkRequest(
+                        file = file,
+                        note = link.note ?: "This link points to another file."
+                    )
+                    AppSettings.linkTapBehavior(context) ==
+                        com.pdfpaper.app.data.LinkTapBehavior.JUMP_DIRECTLY &&
+                        link.targets.isNotEmpty() -> jumpToLink(link.targets.first())
+                    else -> linkCard = LinkCardRequest(link)
+                }
+            }
+        }
+        handled
+    }
+
+    val openExternal: () -> Unit = {
+        val request = externalLink
+        externalLink = null
+        val uriText = request?.uri
+        val file = request?.file
+        if (uriText != null) {
+            val parsed = runCatching { Uri.parse(uriText) }.getOrNull()
+            val scheme = parsed?.scheme?.lowercase()
+            if (parsed == null || scheme !in setOf("http", "https", "mailto")) {
+                viewModel.showMessage("This link type is not supported")
+            } else {
+                runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, parsed)) }
+                    .onFailure { viewModel.showMessage("No app can open this link") }
+            }
+        } else if (file != null) {
+            viewModel.showMessage("Opening linked files is not supported yet")
+        }
+    }
+
     // Back exits the sheet, then the active tool, and only then the document.
-    BackHandler(enabled = showTools || activeToolId != null) {
-        if (showTools) showTools = false else closeTool()
+    BackHandler(
+        enabled = showTools || activeToolId != null || commentPlacement ||
+            stampPlacement != null || signaturePlacement != null ||
+            pendingSignature != null || pinnedLink != null
+    ) {
+        when {
+            showTools -> showTools = false
+            signaturePlacement != null -> signaturePlacement = null
+            pendingSignature != null -> pendingSignature = null
+            stampPlacement != null -> stampPlacement = null
+            pinnedLink != null -> pinnedLink = null
+            else -> closeTool()
+        }
     }
 
     Surface(modifier = Modifier.fillMaxSize()) {
@@ -467,11 +704,19 @@ fun ViewerScreen(
                                     targetPixelWidth = (screenWidthPx * renderZoom).roundToInt(),
                                     onVisible = viewModel::onPageVisible,
                                     onHidden = viewModel::onPageHidden,
+                                    linkTapEnabled = linkTapEnabled,
+                                    onTap = onLinkTap,
                                     onSelect = viewModel::selectAt,
                                     onInkStart = viewModel::startInk,
                                     onInkExtend = viewModel::extendInk,
                                     onInkEnd = viewModel::finishInk,
-                                    onNoteTap = { i, fx, fy -> noteTarget = Triple(i, fx, fy) },
+                                    onNoteTap = { i, fx, fy ->
+                                        if (commentPlacement) {
+                                            commentTarget = Triple(i, fx, fy)
+                                        } else {
+                                            noteTarget = Triple(i, fx, fy)
+                                        }
+                                    },
                                     onPlaceText = { i, fx, fy ->
                                         textTarget = TextTarget(i, EditableBounds.around(fx, fy))
                                     },
@@ -495,7 +740,32 @@ fun ViewerScreen(
                                     },
                                     onSelectObject = viewModel::selectObject,
                                     onBoundsChange = viewModel::updateObjectBounds,
-                                    onClearObjectSelection = viewModel::clearObjectSelection
+                                    onClearObjectSelection = viewModel::clearObjectSelection,
+                                    stamp = stampPlacement?.takeIf { it.pageIndex == index },
+                                    stampAuthor = author,
+                                    onStampTransform = { cx, cy, width ->
+                                        stampPlacement = stampPlacement?.copy(
+                                            centerX = cx,
+                                            centerY = cy,
+                                            widthFraction = width
+                                        )
+                                    },
+                                    signature = signaturePlacement?.takeIf { it.pageIndex == index },
+                                    onSignatureTransform = { cx, cy, width ->
+                                        signaturePlacement = signaturePlacement?.copy(
+                                            centerX = cx,
+                                            centerY = cy,
+                                            widthFraction = width
+                                        )
+                                    },
+                                    signatureTap = pendingSignature != null,
+                                    onSignatureTap = { i, fx, fy ->
+                                        val pending = pendingSignature
+                                        if (pending != null) {
+                                            signaturePlacement = pending.at(i, fx, fy)
+                                            pendingSignature = null
+                                        }
+                                    }
                                 )
                             }
                         }
@@ -504,6 +774,106 @@ fun ViewerScreen(
                 SnackbarHost(
                     hostState = snackbar,
                     modifier = Modifier.align(Alignment.BottomCenter)
+                )
+                if (linkBackStack.isNotEmpty()) {
+                    Surface(
+                        color = MaterialTheme.colorScheme.primaryContainer,
+                        contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                        shape = RoundedCornerShape(50),
+                        shadowElevation = 4.dp,
+                        modifier = Modifier
+                            .align(Alignment.BottomStart)
+                            .padding(16.dp)
+                            .testTag(UiTags.LINK_BACK)
+                            .clickable { restoreReadingPosition() }
+                    ) {
+                        Text(
+                            "Back to where I was",
+                            style = MaterialTheme.typography.labelLarge,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp)
+                        )
+                    }
+                }
+                pinnedLink?.let { pinned ->
+                    PinnedLinkPanel(
+                        target = pinned,
+                        onClose = { pinnedLink = null },
+                        onGoTo = jumpToLink,
+                        loadPreview = viewModel::linkPreview,
+                        modifier = Modifier.align(Alignment.CenterEnd)
+                    )
+                }
+            }
+
+            val placing = stampPlacement
+            if (placing != null) {
+                StampPlacementBar(
+                    placement = placing,
+                    onCancel = { stampPlacement = null },
+                    onPlace = {
+                        viewModel.addStamp(
+                            design = placing.design,
+                            pageIndex = placing.pageIndex,
+                            centerX = placing.centerX,
+                            centerY = placing.centerY,
+                            widthFraction = placing.widthFraction
+                        )
+                        stampPlacement = null
+                    }
+                )
+            }
+
+            val pending = pendingSignature
+            if (pending != null) {
+                SignatureTapBar(
+                    pending = pending,
+                    onCancel = { pendingSignature = null }
+                )
+            }
+
+            val placingSignature = signaturePlacement
+            if (placingSignature != null) {
+                SignaturePlacementBar(
+                    placement = placingSignature,
+                    onCancel = { signaturePlacement = null },
+                    onApply = {
+                        val chosen = placingSignature
+                        signaturePlacement = null
+                        if (chosen.kind == SignaturePlacementKind.VISUAL) {
+                            val draft = chosen.draft
+                            if (draft == null) {
+                                viewModel.showMessage("The signature is empty.")
+                            } else {
+                                viewModel.placeVisualSignature(
+                                    draft = draft,
+                                    pageIndex = chosen.pageIndex,
+                                    centerX = chosen.centerX,
+                                    centerY = chosen.centerY,
+                                    widthFraction = chosen.widthFraction,
+                                    captionName = chosen.captionName,
+                                    captionDate = chosen.captionDate
+                                )
+                            }
+                        } else {
+                            val certificate = chosen.certificate
+                            if (certificate == null) {
+                                viewModel.showMessage("Choose a signing certificate first.")
+                            } else {
+                                confirmWithDeviceLock {
+                                    viewModel.signDigitally(
+                                        certificate = certificate,
+                                        reason = chosen.reason,
+                                        location = chosen.location,
+                                        visible = true,
+                                        pageIndex = chosen.pageIndex,
+                                        centerX = chosen.centerX,
+                                        centerY = chosen.centerY,
+                                        widthFraction = chosen.widthFraction
+                                    )
+                                }
+                            }
+                        }
+                    }
                 )
             }
 
@@ -541,13 +911,67 @@ fun ViewerScreen(
         }
     }
 
+    val shownLink = linkCard
+    if (shownLink != null) {
+        LinkPreviewSheet(
+            request = shownLink,
+            onDismiss = { linkCard = null },
+            onGoTo = jumpToLink,
+            onPin = { target ->
+                pinnedLink = target
+                linkCard = null
+            },
+            onCopy = { target ->
+                val text = target.copyText.ifBlank { target.title }
+                clipboard.setText(AnnotatedString(text))
+                viewModel.showMessage("Copied preview text")
+            },
+            loadPreview = viewModel::linkPreview
+        )
+    }
+
+    val external = externalLink
+    if (external != null) {
+        ExternalLinkDialog(
+            request = external,
+            onDismiss = { externalLink = null },
+            onOpen = openExternal
+        )
+    }
+
     val target = noteTarget
     if (target != null) {
         NoteDialog(
+            author = author,
             onDismiss = { noteTarget = null },
             onConfirm = { text ->
-                viewModel.addNote(target.first, target.second, target.third, text)
+                viewModel.addNote(target.first, target.second, target.third, text, title = author)
                 noteTarget = null
+            }
+        )
+    }
+
+    val commentAt = commentTarget
+    if (commentAt != null) {
+        NoteDialog(
+            title = "Add comment",
+            fieldLabel = "Comment",
+            author = author,
+            onDismiss = {
+                commentTarget = null
+                commentPlacement = false
+            },
+            onConfirm = { text ->
+                viewModel.addNote(
+                    commentAt.first,
+                    commentAt.second,
+                    commentAt.third,
+                    text,
+                    title = author
+                )
+                commentTarget = null
+                commentPlacement = false
+                showComments = true
             }
         )
     }
@@ -586,6 +1010,223 @@ fun ViewerScreen(
                 showTools = false
                 viewModel.showMessage("${tool.name} is coming soon")
             }
+        )
+    }
+
+    if (showComments) {
+        val drafts = remember(edit.annotations, author) {
+            edit.annotations.filterIsInstance<NoteSpec>().map { note ->
+                CommentDraftUi(note.pageIndex, note.title ?: author, note.contents)
+            }
+        }
+        CommentsSheet(
+            saved = comments,
+            localReplies = commentReplies,
+            localStatuses = commentStatuses,
+            drafts = drafts,
+            author = author,
+            loading = commentsLoading,
+            error = commentsError,
+            onDismiss = { showComments = false },
+            onAddComment = {
+                showComments = false
+                toolAnnotationStart = edit.annotations.size
+                viewModel.startViewerTool("note")
+                activeToolId = "comments"
+                commentPlacement = true
+            },
+            onReply = { thread, text ->
+                viewModel.addCommentReply(thread.id, thread.pageIndex, text)
+            },
+            onResolve = { thread, resolved ->
+                viewModel.setCommentResolved(thread.id, thread.pageIndex, resolved)
+            },
+            onOpenSettings = {
+                showComments = false
+                onOpenSettings()
+            }
+        )
+    }
+
+    if (showStamps) {
+        StampSheet(
+            author = author,
+            onDismiss = { showStamps = false },
+            onSelect = { design ->
+                showStamps = false
+                val custom = CustomStampStore(context).load()
+                    .firstOrNull { it.id == design.id }
+                val page = listState.firstVisibleItemIndex
+                    .coerceIn(0, (state.pageCount - 1).coerceAtLeast(0))
+                stampPlacement = StampPlacement(
+                    design = design,
+                    pageIndex = page,
+                    centerX = 0.5f,
+                    centerY = 0.5f,
+                    widthFraction = 0.36f,
+                    imageBytes = custom?.image
+                )
+            }
+        )
+    }
+
+    if (showSignOptions) {
+        SignOptionsSheet(
+            hasUnsavedEdits = edit.hasPendingChanges,
+            onDismiss = { showSignOptions = false },
+            onVisual = {
+                showSignOptions = false
+                showVisualSignature = true
+            },
+            onDigital = {
+                showSignOptions = false
+                showDigitalSignature = true
+            }
+        )
+    }
+
+    if (showVisualSignature) {
+        VisualSignatureDialog(
+            author = author,
+            onDismiss = { showVisualSignature = false },
+            onConfirm = { draft, captionName, captionDate ->
+                showVisualSignature = false
+                pendingSignature = PendingSignature(
+                    kind = SignaturePlacementKind.VISUAL,
+                    draft = draft,
+                    captionName = captionName,
+                    captionDate = captionDate,
+                    widthFraction = 0.4f
+                )
+            }
+        )
+    }
+
+    if (showDigitalSignature) {
+        DigitalSignatureDialog(
+            onDismiss = { showDigitalSignature = false },
+            onContinue = { certificate, reason, location, visible ->
+                showDigitalSignature = false
+                val page = listState.firstVisibleItemIndex
+                    .coerceIn(0, (state.pageCount - 1).coerceAtLeast(0))
+                if (visible) {
+                    pendingSignature = PendingSignature(
+                        kind = SignaturePlacementKind.DIGITAL,
+                        certificate = certificate,
+                        reason = reason,
+                        location = location,
+                        widthFraction = 0.44f
+                    )
+                } else {
+                    confirmWithDeviceLock {
+                        viewModel.signDigitally(
+                            certificate = certificate,
+                            reason = reason,
+                            location = location,
+                            visible = false,
+                            pageIndex = page,
+                            centerX = 0.5f,
+                            centerY = 0.5f,
+                            widthFraction = 0.44f
+                        )
+                    }
+                }
+            }
+        )
+    }
+
+    if (signing.busy) {
+        AlertDialog(
+            onDismissRequest = {},
+            title = { Text("Signing...") },
+            text = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
+                    Spacer(Modifier.width(12.dp))
+                    Text("Writing the signature and checking it on this device.")
+                }
+            },
+            confirmButton = {}
+        )
+    }
+
+    signing.error?.let { message ->
+        AlertDialog(
+            onDismissRequest = viewModel::clearSigningResult,
+            title = { Text("Could not sign") },
+            text = { Text(message) },
+            confirmButton = {
+                TextButton(onClick = viewModel::clearSigningResult) { Text("OK") }
+            }
+        )
+    }
+
+    signing.outcome?.let { outcome ->
+        SigningResultDialog(
+            outcome = outcome,
+            onSave = viewModel::exportSigned,
+            onDone = viewModel::clearSigningResult
+        )
+    }
+
+    if (showDeviceFallback) {
+        AlertDialog(
+            onDismissRequest = {
+                showDeviceFallback = false
+                pendingDeviceAction = null
+            },
+            title = { Text("Confirm signing") },
+            text = {
+                Text(
+                    "This device has no screen lock set up, or the lock screen is not " +
+                        "available. Tap Confirm to sign this PDF. For stronger protection, " +
+                        "set a screen lock in Android Settings."
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showDeviceFallback = false
+                        val action = pendingDeviceAction
+                        pendingDeviceAction = null
+                        action?.invoke()
+                    },
+                    modifier = Modifier.testTag(UiTags.DEVICE_CONFIRM_FALLBACK)
+                ) { Text("Confirm") }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        showDeviceFallback = false
+                        pendingDeviceAction = null
+                    }
+                ) { Text("Cancel") }
+            }
+        )
+    }
+
+    if (showSignatures) {
+        SignaturesSheet(
+            state = signatures,
+            onDismiss = { showSignatures = false },
+            onReload = viewModel::reloadSignatures
+        )
+    }
+
+    if (showOcr) {
+        OcrSheet(
+            state = ocr,
+            currentPage = listState.firstVisibleItemIndex + 1,
+            pageCount = state.pageCount,
+            onStart = { language, allPages ->
+                viewModel.startOcr(language, allPages, listState.firstVisibleItemIndex)
+            },
+            onSave = {
+                showOcr = false
+                viewModel.exportSearchable()
+            },
+            onCancel = viewModel::cancelOcr,
+            onDismiss = { showOcr = false }
         )
     }
 
@@ -1136,22 +1777,41 @@ private fun FieldRow(field: PdfField, values: Map<String, String>, onValue: (Str
 }
 
 @Composable
-private fun NoteDialog(onDismiss: () -> Unit, onConfirm: (String) -> Unit) {
+private fun NoteDialog(
+    onDismiss: () -> Unit,
+    onConfirm: (String) -> Unit,
+    title: String = "New note",
+    fieldLabel: String = "Note",
+    author: String? = null
+) {
     var text by remember { mutableStateOf("") }
     AlertDialog(
         onDismissRequest = onDismiss,
         confirmButton = {
-            TextButton(onClick = { onConfirm(text) }, enabled = text.isNotBlank()) { Text("Add") }
+            TextButton(onClick = { onConfirm(text) }, enabled = text.isNotBlank()) {
+                Text(if (title == "Add comment") "Add comment" else "Add")
+            }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
-        title = { Text("New note") },
+        title = { Text(title) },
         text = {
-            OutlinedTextField(
-                value = text,
-                onValueChange = { text = it },
-                label = { Text("Note") },
-                modifier = Modifier.fillMaxWidth()
-            )
+            Column {
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = { text = it },
+                    label = { Text(fieldLabel) },
+                    minLines = 3,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                if (author != null) {
+                    Text(
+                        "Signed as $author",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 6.dp)
+                    )
+                }
+            }
         }
     )
 }
@@ -1238,6 +1898,8 @@ private fun PageItem(
     targetPixelWidth: Int,
     onVisible: (Int, Int) -> Unit,
     onHidden: (Int) -> Unit,
+    linkTapEnabled: Boolean,
+    onTap: (Int, Float, Float) -> Boolean,
     onSelect: (Int, Float, Float, Boolean) -> Unit,
     onInkStart: (Int, Float, Float) -> Unit,
     onInkExtend: (Float, Float) -> Unit,
@@ -1247,7 +1909,14 @@ private fun PageItem(
     onPlaceImage: (Int, Float, Float) -> Unit,
     onSelectObject: (String) -> Unit,
     onBoundsChange: (String, EditableBounds) -> Unit,
-    onClearObjectSelection: () -> Unit
+    onClearObjectSelection: () -> Unit,
+    stamp: StampPlacement?,
+    stampAuthor: String,
+    onStampTransform: (Float, Float, Float) -> Unit,
+    signature: SignaturePlacementUi?,
+    onSignatureTransform: (Float, Float, Float) -> Unit,
+    signatureTap: Boolean,
+    onSignatureTap: (Int, Float, Float) -> Unit
 ) {
     val aspect = remember(box) {
         val (w, h) = if (box != null) box.rotatedWidth to box.rotatedHeight else 612.0 to 792.0
@@ -1258,6 +1927,10 @@ private fun PageItem(
     // changes. Sharing the Unit key meant switching from text selection to a
     // note/text tap kept the old word-selection handler installed.
     val gesture = when {
+        signatureTap ->
+            Modifier.noteTapGesture(key = "signature-place-$index") { fx, fy ->
+                onSignatureTap(index, fx, fy)
+            }
         editTool == AnnotationTool.INK -> Modifier.inkGestures(
             key = "ink-$index",
             onStart = { fx, fy -> onInkStart(index, fx, fy) },
@@ -1278,7 +1951,10 @@ private fun PageItem(
             Modifier.noteTapGesture(key = ObjectEditTool.SELECT to objects) { fx, fy ->
                 if (objects.none { it.bounds.contains(fx, fy) }) onClearObjectSelection()
             }
-        else -> Modifier.wordSelectionGestures(key = "select-$index") { fx, fy, extend ->
+        else -> Modifier.wordSelectionGestures(
+            key = "select-$index-$linkTapEnabled",
+            onTap = { fx, fy -> onTap(index, fx, fy) }
+        ) { fx, fy, extend ->
             onSelect(index, fx, fy, extend)
         }
     }
@@ -1316,6 +1992,21 @@ private fun PageItem(
                 onSelect = onSelectObject,
                 onBoundsChange = onBoundsChange
             )
+            if (stamp != null) {
+                StampPlacementOverlay(
+                    placement = stamp,
+                    author = stampAuthor,
+                    modifier = Modifier.fillMaxSize(),
+                    onTransform = onStampTransform
+                )
+            }
+            if (signature != null) {
+                SignaturePlacementOverlay(
+                    placement = signature,
+                    modifier = Modifier.fillMaxSize(),
+                    onTransform = onSignatureTransform
+                )
+            }
         } else {
             CircularProgressIndicator(Modifier.size(28.dp))
         }
@@ -1650,6 +2341,7 @@ private fun DrawScope.drawPolyline(plan: PageRenderPlan, points: List<Double>, c
  */
 private fun Modifier.wordSelectionGestures(
     key: Any?,
+    onTap: ((fx: Float, fy: Float) -> Boolean)? = null,
     onSelect: (fx: Float, fy: Float, extend: Boolean) -> Unit
 ): Modifier = pointerInput(key) {
     fun fraction(offset: Offset): Pair<Float, Float> =
@@ -1664,7 +2356,14 @@ private fun Modifier.wordSelectionGestures(
             val event = awaitPointerEvent()
             val change = event.changes.firstOrNull { it.id == down.id } ?: break
             if (!change.pressed) {
-                if (tap || dragging) {
+                if (tap && !dragging) {
+                    val (fx, fy) = fraction(change.position)
+                    // A finger tap may hit a link; a stylus tap always selects
+                    // text so annotating with a pen keeps working (T61).
+                    val finger = down.type == PointerType.Touch || down.type == PointerType.Mouse
+                    val handled = finger && onTap?.invoke(fx, fy) == true
+                    if (!handled) onSelect(fx, fy, false)
+                } else if (dragging) {
                     val (fx, fy) = fraction(change.position)
                     onSelect(fx, fy, false)
                 }

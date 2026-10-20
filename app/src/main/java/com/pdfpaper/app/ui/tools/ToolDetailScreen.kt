@@ -55,7 +55,8 @@ fun ToolDetailScreen(
         path: String,
         startInEdit: Boolean,
         startWithForms: Boolean,
-        startEditTool: String?
+        startEditTool: String?,
+        startPanel: String?
     ) -> Unit,
     onOpenInfo: (path: String) -> Unit
 ) {
@@ -90,8 +91,12 @@ fun ToolDetailScreen(
                                 path,
                                 tool.viewerTool != null || tool.opensForms,
                                 tool.opensForms,
-                                tool.viewerTool
+                                tool.viewerTool,
+                                tool.viewerAction
                             )
+                            // New PDF and Scan have no source document; the All
+                            // tools screen opens their routes without a picker.
+                            ToolDestination.NEW_PDF, ToolDestination.SCAN -> Unit
                         }
                     }
                     .onFailure {
