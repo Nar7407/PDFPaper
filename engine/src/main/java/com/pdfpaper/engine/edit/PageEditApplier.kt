@@ -141,6 +141,7 @@ internal class PageEditApplier(
                 is AddTextEdit -> ContentSerializer.write(textCommands(edit), out)
                 is AddOcrTextEdit -> ContentSerializer.write(ocrTextCommands(edit), out)
                 is AddImageEdit -> ContentSerializer.write(imageCommands(edit), out)
+                is PlaceFormEdit -> ContentSerializer.write(formCommands(edit), out)
                 is ReplaceImageEdit -> replaceImage(edit)
                 else -> {}
             }
@@ -159,6 +160,7 @@ internal class PageEditApplier(
                 is AddTextEdit -> model.commands += textCommands(edit)
                 is AddOcrTextEdit -> model.commands += ocrTextCommands(edit)
                 is AddImageEdit -> model.commands += imageCommands(edit)
+                is PlaceFormEdit -> model.commands += formCommands(edit)
                 is MoveImageEdit -> model.move(edit.imageId, edit.dx, edit.dy)
                 is ResizeImageEdit -> model.resize(edit.imageId, edit.x, edit.y, edit.width, edit.height)
                 is DeleteImageEdit -> {
@@ -300,6 +302,40 @@ internal class PageEditApplier(
                 listOf(
                     PdfReal(edit.width), PdfInteger(0), PdfInteger(0), PdfReal(edit.height),
                     PdfReal(edit.x), PdfReal(edit.y)
+                ),
+                "cm"
+            ),
+            ContentCommand(listOf(name), "Do"),
+            ContentCommand(emptyList(), "Q")
+        )
+    }
+
+    /**
+     * Registers [PlaceFormEdit.form] in the page's /XObject resources and draws
+     * it with the form's /BBox scaled into the requested rectangle (T26).
+     */
+    private fun formCommands(edit: PlaceFormEdit): List<ContentCommand> {
+        if (edit.width <= 0.0 || edit.height <= 0.0) return emptyList()
+        if (!edit.width.isFinite() || !edit.height.isFinite()) return emptyList()
+        if (edit.bbox.width <= 0.0 || edit.bbox.height <= 0.0) return emptyList()
+        val copied = copier.copyValue(edit.form) ?: return emptyList()
+        val formRef = when (copied) {
+            is PdfRef -> copied
+            is PdfStream -> builder.addStream(copied.dict, copied.data)
+            else -> return emptyList()
+        }
+        val name = freshName("PpS")
+        xobjectResources[name] = formRef
+        val scaleX = edit.width / edit.bbox.width
+        val scaleY = edit.height / edit.bbox.height
+        val tx = edit.x - edit.bbox.left * scaleX
+        val ty = edit.y - edit.bbox.bottom * scaleY
+        return listOf(
+            ContentCommand(emptyList(), "q"),
+            ContentCommand(
+                listOf(
+                    PdfReal(scaleX), PdfInteger(0), PdfInteger(0), PdfReal(scaleY),
+                    PdfReal(tx), PdfReal(ty)
                 ),
                 "cm"
             ),

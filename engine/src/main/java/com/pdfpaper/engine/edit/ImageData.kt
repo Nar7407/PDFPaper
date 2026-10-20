@@ -49,6 +49,9 @@ class ImageData internal constructor(
 /** Builds [ImageData] from JPEG or PNG bytes (task T17, image editing). */
 object EditImages {
 
+    /** The JDK ImageIO decoder used when no host decoder is supplied. */
+    fun defaultDecoder(): RasterDecoder = ImageIoDecoder
+
     /** Sniffs the format and decodes accordingly; failure is a [Result], never a throw. */
     fun decode(bytes: ByteArray, decoder: RasterDecoder = ImageIoDecoder): Result<ImageData> = runCatching {
         require(bytes.size >= 8) { "image data is too short" }

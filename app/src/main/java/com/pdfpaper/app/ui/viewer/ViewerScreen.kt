@@ -1623,6 +1623,7 @@ private fun DrawScope.drawPendingAnnotations(
             // Comments written by the engine CLI (T22) and stamps (T23); the
             // viewer has no tool that creates them, so nothing is pending.
             is UnderlineSpec, is ReplySpec, is StatusSpec, is StampSpec -> Unit
+            else -> Unit
         }
     }
     if (inkDraft != null) drawPolyline(plan, inkDraft.points, inkColor, 3f)

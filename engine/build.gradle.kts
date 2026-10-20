@@ -94,6 +94,16 @@ tasks.register<JavaExec>("stamp") {
     workingDir = rootProject.projectDir
 }
 
+// T26: place drawn, typed or image visual signatures (never cryptographic).
+tasks.register<JavaExec>("signvisual") {
+    group = "verification"
+    description = "Place or flatten a visual signature (drawn, typed or image) on a PDF."
+    classpath = sourceSets["main"].runtimeClasspath
+    mainClass.set("com.pdfpaper.engine.tools.PdfSignVisualCliKt")
+    // Paths on the command line are resolved from the repo root, not engine/.
+    workingDir = rootProject.projectDir
+}
+
 // T25: OCR text-layer CLI. Usage:
 //   ./gradlew :engine:ocr --args="ocr in.pdf --lang eng+hin --out out.pdf"
 tasks.register<JavaExec>("ocr") {

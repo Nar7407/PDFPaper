@@ -1,7 +1,9 @@
 package com.pdfpaper.engine.edit
 
 import com.pdfpaper.engine.geom.PdfMatrix
+import com.pdfpaper.engine.geom.PdfRect
 import com.pdfpaper.engine.graphics.PdfColor
+import com.pdfpaper.engine.model.PdfObject
 
 /**
  * One editing operation queued for a page (task T17). `pageIndex` is a
@@ -102,6 +104,25 @@ class AddOcrTextEdit(
     val matrix: PdfMatrix,
     val size: Double,
     val horizontalScale: Double
+) : PageEdit
+
+/**
+ * Paints an existing form XObject into page content (T26 flattening). [form]
+ * may be a source [com.pdfpaper.engine.model.PdfRef] or a direct stream; it is
+ * copied into the output page's resources. [bbox] is the form's own /BBox and
+ * is scaled into the target rectangle ([x], [y], [width], [height]).
+ *
+ * This does not remove the source annotation; callers that flatten an
+ * annotation pass its object number to the writer's dropped-annotation set.
+ */
+class PlaceFormEdit(
+    override val pageIndex: Int,
+    val form: PdfObject,
+    val x: Double,
+    val y: Double,
+    val width: Double,
+    val height: Double,
+    val bbox: PdfRect = PdfRect(0.0, 0.0, width, height)
 ) : PageEdit
 
 /**

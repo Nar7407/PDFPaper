@@ -14,6 +14,7 @@ if /I "%~1"=="images-to-pdf" goto createpdf
 if /I "%~1"=="text-to-pdf" goto createpdf
 if /I "%~1"=="comments" goto comments
 if /I "%~1"=="stamp" goto stamp
+if /I "%~1"=="sign-visual" goto signvisual
 if /I "%~1"=="signatures" goto signatures
 if /I "%~1"=="ocr" goto ocr
 goto usage
@@ -43,6 +44,12 @@ exit /b %ERRORLEVEL%
 call "%~dp0gradlew.bat" -q :engine:stamp --args="%*"
 exit /b %ERRORLEVEL%
 
+:signvisual
+set "SIGNVISUAL_ARGS=%*"
+set "SIGNVISUAL_ARGS=%SIGNVISUAL_ARGS:"=%"
+call "%~dp0gradlew.bat" -q :engine:signvisual --args="%SIGNVISUAL_ARGS%"
+exit /b %ERRORLEVEL%
+
 :signatures
 call "%~dp0gradlew.bat" -q :signatures:verify --args="%*"
 exit /b %ERRORLEVEL%
@@ -63,6 +70,7 @@ echo        cli images-to-pdf ^<image^>... --out ^<out.pdf^> [--fit fit^|fill^|o
 echo        cli text-to-pdf ^<in.txt^> --out ^<out.pdf^> 1>&2
 echo        cli comments list^|add^|reply^|set-status ... 1>&2
 echo        cli stamp list^|add ... 1>&2
+echo        cli sign-visual ^<in.pdf^> --page N --image^|--typed^|--strokes ... --x X --y Y --width W --out ^<out.pdf^> 1>&2
 echo        cli signatures verify ^<file.pdf^> [--truststore ^<pem-or-keystore^>] [--password ^<pw^>] 1>&2
 echo        cli ocr ^<file.pdf^> [--lang eng+hin] [--out ^<out.pdf^>] [--pages 1,3-5] [--text ^<words^>] 1>&2
 exit /b 2

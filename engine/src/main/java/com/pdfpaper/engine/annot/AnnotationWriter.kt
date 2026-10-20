@@ -11,6 +11,9 @@ import com.pdfpaper.engine.model.PdfObject
 import com.pdfpaper.engine.model.PdfReal
 import com.pdfpaper.engine.model.PdfRef
 import com.pdfpaper.engine.model.PdfString
+import com.pdfpaper.engine.sign.SignatureArtwork
+import com.pdfpaper.engine.sign.VisualSignaturePainter
+import com.pdfpaper.engine.sign.VisualSignatureSource
 import com.pdfpaper.engine.stamp.StampPainter
 import com.pdfpaper.engine.stamp.StampText
 import com.pdfpaper.engine.write.PdfDocumentBuilder
@@ -157,6 +160,7 @@ internal class AnnotationWriter(private val builder: PdfDocumentBuilder) {
         is ReplySpec -> buildReply(spec, pageRef, resolveAnnot)
         is StatusSpec -> buildStatus(spec, pageRef, resolveAnnot)
         is StampSpec -> listOfNotNull(buildStamp(spec, pageRef))
+        is VisualSignatureSpec -> listOfNotNull(buildVisualSignature(spec, pageRef))
     }
 
     private fun buildHighlight(spec: HighlightSpec, pageRef: PdfRef, pageBox: PdfRect?): List<PdfRef> {
@@ -328,6 +332,65 @@ internal class AnnotationWriter(private val builder: PdfDocumentBuilder) {
         common(annot, "Stamp", box, contents, spec.author, pageRef, subject = spec.design.group.label, creation = true)
         spec.design.standardName?.let { annot[PdfName("Name")] = PdfName(it) }
         if (spec.opacity < 1.0) annot[PdfName("CA")] = real(spec.opacity.coerceIn(0.0, 1.0))
+        annot[PdfName("AP")] = dict("N" to ap)
+        return builder.add(PdfDict(annot))
+    }
+
+    /**
+     * A visual signature (T26), drawn by [VisualSignaturePainter]. Drawn
+     * strokes use /Ink and typed names or pictures use /Stamp. The appearance
+     * is self-contained; `/PdfPaperVisualSignature` marks it as visual-only so
+     * no consumer can mistake it for a cryptographic signature.
+     */
+    private fun buildVisualSignature(spec: VisualSignatureSpec, pageRef: PdfRef): PdfRef? {
+        val appearance = VisualSignaturePainter.paint(
+            builder, spec.artwork, spec.width, spec.rotation, spec.caption
+        )
+        if (appearance.width <= 0.0 || appearance.height <= 0.0) return null
+        val box = PdfRect(spec.x, spec.y, spec.x + appearance.width, spec.y + appearance.height)
+        val label = "Visual signature (not a cryptographic signature)"
+        val contents = buildString {
+            append(label)
+            val lines = spec.caption.lines()
+            if (lines.isNotEmpty()) {
+                append(": ")
+                append(lines.joinToString(" / "))
+            }
+        }
+        val subtype = if (spec.artwork is SignatureArtwork.Drawn) "Ink" else "Stamp"
+        val annot = LinkedHashMap<PdfName, PdfObject>()
+        common(annot, subtype, box, contents, spec.author, pageRef, subject = label, creation = true)
+        annot[PdfName("NM")] = textString(spec.marker)
+        annot[PdfName("PdfPaperVisualSignature")] = dict(
+            "Type" to PdfName("PdfPaperVisualSignature"),
+            "VisualOnly" to PdfBoolean(true),
+            "Source" to PdfName(VisualSignatureSource.pdfName(spec.source))
+        )
+        val drawn = spec.artwork as? SignatureArtwork.Drawn
+        if (drawn != null) {
+            annot[PdfName("C")] = colorArray(drawn.color)
+            annot[PdfName("BS")] = dict(
+                "W" to real(drawn.width),
+                "S" to PdfName("S")
+            )
+            val ink = ArrayList<PdfObject>(appearance.inkLists.size)
+            for (stroke in appearance.inkLists) {
+                val values = ArrayList<PdfObject>(stroke.size)
+                var i = 0
+                while (i + 1 < stroke.size) {
+                    values += real(spec.x + stroke[i])
+                    values += real(spec.y + stroke[i + 1])
+                    i += 2
+                }
+                ink += PdfArray(values)
+            }
+            annot[PdfName("InkList")] = PdfArray(ink)
+        }
+        val ap = form(
+            listOf(0.0, 0.0, appearance.width, appearance.height),
+            appearance.resources,
+            appearance.content
+        )
         annot[PdfName("AP")] = dict("N" to ap)
         return builder.add(PdfDict(annot))
     }

@@ -1,6 +1,8 @@
 package com.pdfpaper.engine.write
 
+import com.pdfpaper.engine.annot.AnnotationPlacement
 import com.pdfpaper.engine.annot.AnnotationSpec
+import com.pdfpaper.engine.annot.AnnotationTransformer
 import com.pdfpaper.engine.annot.AnnotationWriter
 import com.pdfpaper.engine.edit.OcrTextFont
 import com.pdfpaper.engine.edit.PageEdit
@@ -77,7 +79,12 @@ internal class PdfDocumentAssembler(
      * Any reference to them from a kept annotation copies as "dropped", so a
      * reply never survives its comment.
      */
-    private val droppedAnnots: Set<Int> = emptySet()
+    private val droppedAnnots: Set<Int> = emptySet(),
+    /**
+     * Moves, resizes or turns existing primary-document annotations while they
+     * are copied (T26). The annotation object numbers are source object numbers.
+     */
+    private val annotationPlacements: List<AnnotationPlacement> = emptyList()
 ) {
 
     private val builder = PdfDocumentBuilder(version)
@@ -89,7 +96,11 @@ internal class PdfDocumentAssembler(
     private val keptNames = HashSet<String>()
     private val additionsByPage: Map<Int, List<AnnotationSpec>> = additions.groupBy { it.pageIndex }
     private val editsByPage: Map<Int, List<PageEdit>> = edits.groupBy { it.pageIndex }
+    private val placementsByPage: Map<Int, Map<Int, AnnotationPlacement>> =
+        annotationPlacements.groupBy { it.pageIndex }
+            .mapValues { (_, list) -> list.associateBy { it.objNum } }
     private val annotationWriter: AnnotationWriter by lazy { AnnotationWriter(builder) }
+    private val annotationTransformer: AnnotationTransformer by lazy { AnnotationTransformer(builder) }
 
     /** Shared OCR text font for T25 edits; created on the first invisible word. */
     private val ocrFont: Lazy<OcrTextFont> = lazy { OcrTextFont(builder) }
@@ -202,7 +213,8 @@ internal class PdfDocumentAssembler(
             materialise(entries, copier, "Resources", src["Resources"] ?: page.resources)
         }
 
-        val existingAnnots = src["Annots"]?.let { copyAnnots(copier, it, doc === primary) }
+        val placements = if (doc === primary) placementsByPage[selection.pageIndex].orEmpty() else emptyMap()
+        val existingAnnots = src["Annots"]?.let { copyAnnots(copier, it, doc === primary, placements) }
         val extras = if (doc === primary) additionsByPage[selection.pageIndex] else null
         val pageBox = PdfRect.of(page.cropBox)
         val added = extras?.flatMap {
@@ -241,7 +253,12 @@ internal class PdfDocumentAssembler(
 
     // -- Annotations and destinations ----------------------------------------
 
-    private fun copyAnnots(copier: PdfObjectCopier, annotsObj: PdfObject, drops: Boolean): PdfArray? {
+    private fun copyAnnots(
+        copier: PdfObjectCopier,
+        annotsObj: PdfObject,
+        drops: Boolean,
+        placements: Map<Int, AnnotationPlacement>
+    ): PdfArray? {
         val array = copier.resolve(annotsObj) as? PdfArray
             ?: return copier.copyValue(annotsObj) as? PdfArray
         val out = ArrayList<PdfObject>()
@@ -254,11 +271,15 @@ internal class PdfDocumentAssembler(
             // keeps /Parent: a popup's /Parent is its markup annotation
             // (§12.5.6.14).
             val skip = if (annotSubtype(copier, item) == "Widget") setOf("Parent") else emptySet()
-            val copied: PdfObject = when (item) {
+            var copied: PdfObject? = when (item) {
                 is PdfRef -> copier.copyIndirect(item.objNum, skip)
                 else -> copier.copyValue(item, skip)
-            } ?: continue
-            if (keepAnnot(copied)) out += copied
+            }
+            val placement = sourceNum?.let { placements[it] }
+            if (copied != null && placement != null) {
+                copied = annotationTransformer.place(copied, placement)
+            }
+            if (copied != null && keepAnnot(copied)) out += copied
         }
         return if (out.isEmpty()) null else PdfArray(out)
     }
