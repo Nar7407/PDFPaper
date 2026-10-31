@@ -3,7 +3,6 @@ package com.pdfpaper.engine.links
 import com.pdfpaper.engine.annot.AnnotationType
 import com.pdfpaper.engine.annot.annotations
 import com.pdfpaper.engine.geom.PdfRect
-import com.pdfpaper.engine.model.PdfArray
 import com.pdfpaper.engine.model.PdfDict
 import com.pdfpaper.engine.model.PdfDocument
 import com.pdfpaper.engine.model.PdfInteger
@@ -43,11 +42,10 @@ class LinkResolver(private val document: PdfDocument) {
     }
 
     private val catalog: PdfDict? = document.resolveRoot() as? PdfDict
-    private val pageByObj: Map<Int, Int> = pages.associate { it.objNum to it.index }
     private val pageBoxes: MutableMap<Int, PageBox> = HashMap()
     private val layouts: MutableMap<Int, PageLayout?> = HashMap()
 
-    private val namedDestinations: Map<String, PdfObject> by lazy { readNamedDestinations() }
+    private val destinations: DestinationResolver by lazy { DestinationResolver(document, pages) }
     private val outlineTitles: Map<Int, String> by lazy { readOutlineTitles() }
     private val textIndex: TextIndex by lazy { buildTextIndex() }
 
@@ -151,117 +149,8 @@ class LinkResolver(private val document: PdfDocument) {
 
     // ------------------------------------------------------------ destinations
 
-    private fun resolveDestination(obj: PdfObject?, visited: MutableSet<String> = HashSet(), depth: Int = 0): LinkDestination? {
-        if (obj == null || depth > 16) return null
-        when (obj) {
-            is PdfRef -> {
-                if (!visited.add("r${obj.objNum}")) return null
-                return resolveDestination(resolveObject(obj), visited, depth + 1)
-            }
-            is PdfArray -> return parseDestinationArray(obj)
-            is PdfName -> return resolveNamedDestination(obj.name, visited, depth + 1)
-            is PdfString -> return resolveNamedDestination(obj.text(), visited, depth + 1)
-            is PdfDict -> {
-                val inner = obj["D"] ?: obj["Dest"]
-                return if (inner == null) null else resolveDestination(inner, visited, depth + 1)
-            }
-            else -> return null
-        }
-    }
-
-    private fun resolveNamedDestination(name: String, visited: MutableSet<String>, depth: Int): LinkDestination? {
-        if (!visited.add("n$name")) return null
-        val raw = namedDestinations[name] ?: return null
-        return resolveDestination(raw, visited, depth + 1)
-    }
-
-    private fun parseDestinationArray(array: PdfArray): LinkDestination? {
-        if (array.items.isEmpty()) return null
-        val pageIndex = pageIndexFor(array.items[0]) ?: return null
-        val fitName = (array.items.getOrNull(1) as? PdfName)?.name
-        val fit = when (fitName) {
-            "XYZ" -> LinkFit.XYZ
-            "Fit" -> LinkFit.FIT
-            "FitH" -> LinkFit.FIT_H
-            "FitV" -> LinkFit.FIT_V
-            "FitR" -> LinkFit.FIT_RECT
-            "FitB" -> LinkFit.FIT_B
-            "FitBH" -> LinkFit.FIT_BH
-            "FitBV" -> LinkFit.FIT_BV
-            else -> LinkFit.UNKNOWN
-        }
-        val p = { index: Int -> number(array.items.getOrNull(index)) }
-        return when (fit) {
-            LinkFit.XYZ -> LinkDestination(
-                pageIndex, fit, left = p(2), top = p(3), zoom = p(4)
-            )
-            LinkFit.FIT_H, LinkFit.FIT_BH -> LinkDestination(pageIndex, fit, top = p(2))
-            LinkFit.FIT_V, LinkFit.FIT_BV -> LinkDestination(pageIndex, fit, left = p(2))
-            LinkFit.FIT_RECT -> {
-                val left = p(2) ?: return null
-                val bottom = p(3) ?: return null
-                val right = p(4) ?: return null
-                val top = p(5) ?: return null
-                LinkDestination(
-                    pageIndex, fit,
-                    left = left, top = top,
-                    rect = PdfRect(left, bottom, right, top)
-                )
-            }
-            else -> LinkDestination(pageIndex, fit)
-        }
-    }
-
-    private fun pageIndexFor(obj: PdfObject?): Int? = when (obj) {
-        is PdfRef -> pageByObj[obj.objNum]
-        is PdfInteger -> obj.value.toInt().takeIf { it in pages.indices }
-        is PdfDict -> pages.indexOfFirst { it.dict === obj }.takeIf { it >= 0 }
-        else -> null
-    }
-
-    private fun readNamedDestinations(): Map<String, PdfObject> {
-        val out = LinkedHashMap<String, PdfObject>()
-        val destDict = resolveObject(catalog?.get("Dests")) as? PdfDict
-        if (destDict != null) {
-            for ((key, value) in destDict.entries) {
-                out[key.name] = value
-            }
-        }
-        val names = resolveObject(catalog?.get("Names")) as? PdfDict
-        val tree = names?.get("Dests")
-        if (tree != null) flattenNameTree(tree, out, 0, HashSet())
-        return out
-    }
-
-    private fun flattenNameTree(
-        nodeObject: PdfObject,
-        out: MutableMap<String, PdfObject>,
-        depth: Int,
-        visited: MutableSet<Int>
-    ) {
-        if (depth > 16) return
-        val ref = nodeObject as? PdfRef
-        if (ref != null && !visited.add(ref.objNum)) return
-        val node = resolveObject(nodeObject) as? PdfDict ?: return
-        val names = resolveObject(node["Names"]) as? PdfArray
-        if (names != null) {
-            var i = 0
-            while (i + 1 < names.items.size) {
-                val key = when (val k = names.items[i]) {
-                    is PdfString -> k.text()
-                    is PdfName -> k.name
-                    else -> null
-                }
-                val value = names.items[i + 1]
-                if (key != null && key.isNotBlank()) out.putIfAbsent(key, value)
-                i += 2
-            }
-        }
-        val kids = resolveObject(node["Kids"]) as? PdfArray
-        if (kids != null) {
-            for (kid in kids.items) flattenNameTree(kid, out, depth + 1, visited)
-        }
-    }
+    /** Destination grammar is shared with the outline reader (T34). */
+    private fun resolveDestination(obj: PdfObject?): LinkDestination? = destinations.resolve(obj)
 
     private fun readOutlineTitles(): Map<Int, String> {
         val out = LinkedHashMap<Int, String>()
