@@ -6,7 +6,9 @@ import com.pdfpaper.engine.text.RegexMatch
 import com.pdfpaper.engine.text.RegexOptions
 import com.pdfpaper.engine.text.RegexPatternError
 import com.pdfpaper.engine.text.RegexResult
+import com.pdfpaper.engine.text.RegexSearch
 import com.pdfpaper.engine.text.TextRect
+import com.pdfpaper.engine.text.normaliseWithOffsets
 import java.util.Base64
 import java.util.Locale
 
@@ -128,6 +130,17 @@ fun toggleRegexFlag(flags: Set<RegexFlag>, flag: RegexFlag, on: Boolean): Set<Re
 fun regexOptions(flags: Set<RegexFlag>, maxMatches: Int, runTimeMs: Long): RegexOptions =
     RegexOptions(flags = flags, maxMatches = maxMatches, runTimeLimitMs = runTimeMs)
 
+/**
+ * The library's budget: a higher match cap and a longer run than a document,
+ * because it walks many files. The per-page deadline is the shared one, so a
+ * single stored page can never hang the run.
+ */
+fun libraryOptions(
+    flags: Set<RegexFlag>,
+    maxMatches: Int = LIBRARY_MAX_MATCHES,
+    runTimeMs: Long = LIBRARY_RUN_TIME_MS
+): RegexOptions = regexOptions(flags, maxMatches, runTimeMs)
+
 // ---------------------------------------------------------------------- rows
 
 /**
@@ -156,6 +169,49 @@ fun rowsForPage(
             before = match.before,
             after = match.after,
             rects = match.rects
+        )
+    }
+}
+
+/**
+ * One stored page's outcome: the rows it produced, plus why the run stopped
+ * early when it did. The index holds no geometry, so these rows have no rects;
+ * [RegexRow.ordinal] is what a tap uses to re-find the same instance on the
+ * page it opens.
+ */
+data class LibraryPageResult(
+    val rows: List<RegexRow>,
+    val truncated: Boolean = false,
+    val timedOut: Boolean = false,
+    val cancelled: Boolean = false,
+    val error: RegexPatternError? = null
+)
+
+fun libraryPageResult(
+    fileId: Long,
+    documentUri: String,
+    displayName: String,
+    pageIndex: Int,
+    storedText: String,
+    pattern: String,
+    flags: Set<RegexFlag>,
+    maxMatches: Int = LIBRARY_MAX_MATCHES
+): LibraryPageResult {
+    val result = RegexSearch.find(pattern, storedText, libraryOptions(flags, maxMatches))
+    return when (result) {
+        is RegexResult.InvalidPattern -> LibraryPageResult(emptyList(), error = result.error)
+        is RegexResult.Matches -> LibraryPageResult(
+            rows = rowsForPage(
+                RegexScope.LIBRARY,
+                fileId,
+                documentUri,
+                displayName,
+                pageIndex,
+                result
+            ),
+            truncated = result.truncated,
+            timedOut = result.timedOut,
+            cancelled = result.cancelled
         )
     }
 }
@@ -274,6 +330,12 @@ fun describeRegexSummary(
     return parts.joinToString("; ")
 }
 
+/** The tester line: "3 matches on page 4 · 1.2 s". */
+fun describeRegexTester(matchCount: Int, pageIndex: Int, elapsedMs: Long): String {
+    val seconds = String.format(Locale.ROOT, "%.1f", elapsedMs / 1000.0)
+    return "${plural(matchCount, "match", "matches")} on page ${pageIndex + 1} \u00b7 $seconds s"
+}
+
 /**
  * Library mode runs over the T50 index, which stored the page text with every
  * whitespace run collapsed — so the two line-related chips cannot do anything
@@ -340,6 +402,24 @@ fun layoutRangeFor(normalised: NormalisedText, start: Int, end: Int): IntRange {
     if (to <= from) return sourceFrom until sourceFrom
     val last = (normalised.sourceIndex(to) - 1).coerceAtLeast(sourceFrom)
     return sourceFrom..last
+}
+
+/**
+ * Re-finds the match with [ordinal] in a page's own [layoutText] and returns
+ * its range in that text, or null when the page no longer holds it. The stored
+ * text was normalised, so the pattern is run on the same normalisation of the
+ * page and the hit is mapped back through [normaliseWithOffsets].
+ */
+fun ordinalRangeInLayout(
+    layoutText: String,
+    pattern: String,
+    flags: Set<RegexFlag>,
+    ordinal: Int
+): IntRange? {
+    val normalised = normaliseWithOffsets(layoutText)
+    val result = RegexSearch.find(pattern, normalised.text, libraryOptions(flags))
+    val match = rowForOrdinal(result, ordinal) ?: return null
+    return layoutRangeFor(normalised, match.start, match.end)
 }
 
 // ------------------------------------------------------------ saved patterns
