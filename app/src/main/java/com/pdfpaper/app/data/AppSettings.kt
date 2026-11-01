@@ -1,6 +1,7 @@
 package com.pdfpaper.app.data
 
 import android.content.Context
+import com.pdfpaper.app.ui.viewer.speech.SpeechVoiceKey
 import com.pdfpaper.app.ui.search.DEFAULT_REGEX_FLAGS
 import com.pdfpaper.engine.text.RegexFlag
 
@@ -30,6 +31,13 @@ object AppSettings {
     // Regex search (T65)
     private const val KEY_REGEX_SAVED = "regex.saved"
     private const val KEY_REGEX_FLAGS = "regex.flags"
+
+    // Read aloud (T64)
+    private const val KEY_SPEECH_SPEED = "speech.speed"
+    private const val KEY_SPEECH_VOICE = "speech.voice"
+    private const val DEFAULT_SPEECH_SPEED = 1f
+    private const val MIN_SPEECH_SPEED = 0.5f
+    private const val MAX_SPEECH_SPEED = 2f
 
     // The mark tools (T44).
     private const val KEY_WATERMARK_TEXT = "mark.watermark.text"
@@ -232,6 +240,37 @@ object AppSettings {
         prefs(context).edit()
             .putString(KEY_REGEX_FLAGS, flags.joinToString(",") { it.name })
             .apply()
+    }
+
+    // ---- Read aloud (T64) --------------------------------------------------
+
+    /**
+     * The reading speed, as a multiple of the normal pace. A value that was
+     * never set is 1x; a stored value outside the usable range is clamped, so a
+     * hand-edited preferences file cannot make the voice inaudible.
+     */
+    fun speechSpeed(context: Context): Float {
+        val stored = prefs(context).getFloat(KEY_SPEECH_SPEED, DEFAULT_SPEECH_SPEED)
+        if (!stored.isFinite()) return DEFAULT_SPEECH_SPEED
+        return stored.coerceIn(MIN_SPEECH_SPEED, MAX_SPEECH_SPEED)
+    }
+
+    fun setSpeechSpeed(context: Context, value: Float) {
+        val safe = if (!value.isFinite()) DEFAULT_SPEECH_SPEED else value
+        prefs(context).edit()
+            .putFloat(KEY_SPEECH_SPEED, safe.coerceIn(MIN_SPEECH_SPEED, MAX_SPEECH_SPEED))
+            .apply()
+    }
+
+    /** The voice the reader picked, or null when the default voice is used. */
+    fun speechVoice(context: Context): SpeechVoiceKey? =
+        SpeechVoiceKey.decode(prefs(context).getString(KEY_SPEECH_VOICE, null))
+
+    fun setSpeechVoice(context: Context, key: SpeechVoiceKey?) {
+        val editor = prefs(context).edit()
+        if (key == null) editor.remove(KEY_SPEECH_VOICE)
+        else editor.putString(KEY_SPEECH_VOICE, key.encode())
+        editor.apply()
     }
 
     private fun prefs(context: Context) =
