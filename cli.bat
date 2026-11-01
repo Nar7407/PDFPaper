@@ -22,6 +22,8 @@ if /I "%~1"=="compress" goto compress
 if /I "%~1"=="mark" goto mark
 if /I "%~1"=="export-images" goto exportimages
 if /I "%~1"=="extract-images" goto exportimages
+if /I "%~1"=="crop" goto crop
+if /I "%~1"=="search-regex" goto searchregex
 goto usage
 
 :fontinfo
@@ -86,6 +88,16 @@ exit /b %ERRORLEVEL%
 call "%~dp0gradlew.bat" -q :render-jvm:export --args="%*"
 exit /b %ERRORLEVEL%
 
+rem T46 crop and auto-crop (JVM host rasterizer for detection).
+:crop
+call "%~dp0gradlew.bat" -q :render-jvm:crop --args="%*"
+exit /b %ERRORLEVEL%
+
+rem T65 regex search: one pattern, one PDF, a CSV of every match.
+:searchregex
+call "%~dp0gradlew.bat" -q :engine:search-regex --args="%*"
+exit /b %ERRORLEVEL%
+
 :usage
 echo Usage: cli fontinfo ^<file.pdf^> --page ^<n^> 1>&2
 echo        cli add-text^|add-image^|list-images^|move-image^|replace-image^|delete-image ... 1>&2
@@ -106,4 +118,6 @@ echo        cli compress ^<in.pdf^> --preset ^<light^|balanced^|strong^> --out ^
 echo        cli mark watermark^|number-pages^|bates ^<in.pdf^> --out ^<out.pdf^> [...] 1>&2
 echo        cli export-images ^<in.pdf^> --out-dir ^<dir^> [--dpi 150] [--pages 1-5] [--format png^|jpg^|webp] 1>&2
 echo        cli extract-images ^<in.pdf^> --out-dir ^<dir^> [--min-size 32] [--list] 1>&2
+echo        cli crop ^<in.pdf^> --margins 10,10,10,10 --pages all --out ^<out.pdf^> [--remove-hidden] 1>&2
+echo        cli search-regex ^<in.pdf^> "^<pattern^>" --out ^<matches.csv^> [--case-sensitive] [--lines] [--pages 1,3-5] 1>&2
 exit /b 2

@@ -21,6 +21,8 @@ usage() {
     echo "       cli mark watermark|number-pages|bates <in.pdf> --out <out.pdf> [...]" >&2
     echo "       cli export-images <in.pdf> --out-dir <dir> [--dpi 150] [--pages 1-5] [--format png|jpg|webp]" >&2
     echo "       cli extract-images <in.pdf> --out-dir <dir> [--min-size 32] [--list]" >&2
+    echo "       cli crop <in.pdf> --margins 10,10,10,10 --pages all --out <out.pdf> [--remove-hidden]" >&2
+    echo "       cli search-regex <in.pdf> \"<pattern>\" --out <matches.csv> [--case-sensitive] [--lines] [--pages 1,3-5]" >&2
     exit 2
 }
 
@@ -72,6 +74,12 @@ case "$1" in
         ;;
     export-images|extract-images)
         exec "$root/gradlew" -q :render-jvm:export --args="$*"
+        ;;
+    crop)
+        exec "$root/gradlew" -q :render-jvm:crop --args="$*"
+        ;;
+    search-regex)
+        exec "$root/gradlew" -q :engine:search-regex --args="$*"
         ;;
     *)
         usage

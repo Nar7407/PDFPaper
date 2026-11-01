@@ -83,6 +83,17 @@ tasks.register<JavaExec>("comments") {
     workingDir = rootProject.projectDir
 }
 
+// T65: regex search CLI. Usage:
+//   ./gradlew :engine:search-regex --args="search-regex in.pdf \"AB-\d{4}\" --out matches.csv"
+tasks.register<JavaExec>("search-regex") {
+    group = "verification"
+    description = "Search a PDF with a regular expression and write the matches as CSV."
+    classpath = sourceSets["main"].runtimeClasspath
+    mainClass.set("com.pdfpaper.engine.tools.PdfSearchRegexCliKt")
+    // Paths on the command line are resolved from the repo root, not engine/.
+    workingDir = rootProject.projectDir
+}
+
 // T23: stamp CLI. Usage:
 //   ./gradlew :engine:stamp --args="stamp list"
 tasks.register<JavaExec>("stamp") {
