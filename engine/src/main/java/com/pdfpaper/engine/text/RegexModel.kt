@@ -163,9 +163,12 @@ fun contextAround(
     val e = end.coerceIn(s, textLength)
 
     val beforeFrom = (s - r).coerceAtLeast(0)
-    val before = collapseContext(text.subSequence(beforeFrom, s))
+    // The space between the snippet and the match is kept: it is what makes a
+    // row read "…ice AB-1234" instead of "…iceAB-1234". Only the outer edge of
+    // the whole snippet (the clipped side) is trimmed.
+    val before = collapseContext(text.subSequence(beforeFrom, s)).trimStart()
     val afterTo = (e + r).coerceAtMost(textLength)
-    val after = collapseContext(text.subSequence(e, afterTo))
+    val after = collapseContext(text.subSequence(e, afterTo)).trimEnd()
 
     val beforeText = when {
         before.isEmpty() -> ""
@@ -186,7 +189,7 @@ private fun collapseContext(chars: CharSequence): String {
     var pendingSpace = false
     for (ch in chars) {
         if (ch.isWhitespace()) {
-            pendingSpace = builder.isNotEmpty()
+            pendingSpace = true
             continue
         }
         if (pendingSpace) {
@@ -195,6 +198,9 @@ private fun collapseContext(chars: CharSequence): String {
         }
         builder.append(ch)
     }
+    // A run at the inner edge is a real separator; the caller trims the outer
+    // edge, so it is kept here and dropped there.
+    if (pendingSpace) builder.append(' ')
     return builder.toString()
 }
 

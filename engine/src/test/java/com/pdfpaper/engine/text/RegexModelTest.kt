@@ -33,8 +33,8 @@ class RegexModelTest {
     fun contextClipsWithEllipsisAndCollapsesWhitespace() {
         // "alpha beta gamma": the match is "beta" at 6..10.
         val (before, after) = contextAround("alpha beta gamma", 6, 10, 4)
-        assertEquals("…pha", before)
-        assertEquals("gam…", after)
+        assertEquals("…pha ", before)
+        assertEquals(" gam…", after)
     }
 
     @Test
@@ -43,8 +43,9 @@ class RegexModelTest {
         assertEquals("", atStart)
         val atEnd = contextAround("one two", 4, 7, 10).second
         assertEquals("", atEnd)
-        // A context that fits on both sides is returned whole and unmarked.
-        assertEquals("one", contextAround("one two", 4, 7, 10).first)
+        // A context that fits on both sides is returned whole and unmarked;
+        // the space that separates it from the match is kept.
+        assertEquals("one ", contextAround("one two", 4, 7, 10).first)
     }
 
     @Test
