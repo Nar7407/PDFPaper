@@ -1,6 +1,8 @@
 package com.pdfpaper.app.data
 
 import android.content.Context
+import com.pdfpaper.app.ui.search.DEFAULT_REGEX_FLAGS
+import com.pdfpaper.engine.text.RegexFlag
 
 /**
  * Small, app-private settings store (task UI-2). The author name is written
@@ -24,6 +26,10 @@ object AppSettings {
     private const val KEY_AUTHOR = "author_name"
     private const val KEY_LINK_TAP = "link_tap_behavior"
     private const val MAX_AUTHOR_LENGTH = 80
+
+    // Regex search (T65)
+    private const val KEY_REGEX_SAVED = "regex.saved"
+    private const val KEY_REGEX_FLAGS = "regex.flags"
 
     // The mark tools (T44).
     private const val KEY_WATERMARK_TEXT = "mark.watermark.text"
@@ -190,6 +196,41 @@ object AppSettings {
             .putFloat(KEY_BATES_FONT_SIZE, preset.fontSize.toFloat())
             .putString(KEY_BATES_RANGE_MODE, preset.rangeMode)
             .putString(KEY_BATES_RANGE_TEXT, preset.rangeText)
+            .apply()
+    }
+
+    // ---- Regex search (T65) ----------------------------------------------
+
+    /** The saved-pattern records, or null when none were ever saved. */
+    fun savedRegexPatternsRaw(context: Context): String? =
+        prefs(context).getString(KEY_REGEX_SAVED, null)
+
+    fun setSavedRegexPatternsRaw(context: Context, raw: String?) {
+        val editor = prefs(context).edit()
+        if (raw.isNullOrEmpty()) {
+            editor.remove(KEY_REGEX_SAVED)
+        } else {
+            editor.putString(KEY_REGEX_SAVED, raw)
+        }
+        editor.apply()
+    }
+
+    /**
+     * The chips the regex sheet opens with. An unknown name is dropped and an
+     * empty result falls back to the shared default rather than to "no flags".
+     */
+    fun regexFlags(context: Context): Set<RegexFlag> {
+        val raw = prefs(context).getString(KEY_REGEX_FLAGS, null)
+        if (raw.isNullOrEmpty()) return DEFAULT_REGEX_FLAGS
+        val flags = raw.split(',')
+            .mapNotNull { name -> RegexFlag.values().firstOrNull { it.name == name.trim() } }
+            .toSet()
+        return flags.ifEmpty { DEFAULT_REGEX_FLAGS }
+    }
+
+    fun setRegexFlags(context: Context, flags: Set<RegexFlag>) {
+        prefs(context).edit()
+            .putString(KEY_REGEX_FLAGS, flags.joinToString(",") { it.name })
             .apply()
     }
 
