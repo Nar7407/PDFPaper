@@ -2,6 +2,7 @@ package com.pdfpaper.app.ui.tools
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -15,13 +16,21 @@ class ToolRegistryTest {
                 "add-text", "edit-text", "add-image", "edit-image",
                 "highlight", "underline", "draw", "note", "comments", "stamp",
                 "redact", "redact-pages", "redact-find", "redact-properties", "sanitize",
-                "fill-form", "sign", "signatures", "protect",
-                "new-pdf", "scan", "ocr", "compress",
+                "fill-form", "sign", "signatures", "safety", "protect",
+                "new-pdf", "scan", "ocr", "compress", "crop",
                 "watermark", "page-numbers", "bates",
-                "export-images", "info", "save", "save-as", "share", "print"
+                "export-images", "present", "reflow", "flow", "read-aloud", "snip", "info", "save", "save-as", "share", "print"
             ),
             ToolRegistry.search("  ").map { it.id }
         )
+    }
+
+    @Test
+    fun readAloudIsAReadyViewerToolWithItsOwnKeywords() {
+        val tool = ToolRegistry.byId("read-aloud")
+        assertEquals("read-aloud", tool?.viewerAction)
+        assertTrue(tool!!.isAvailable(demoEngine = false))
+        assertEquals(listOf("read-aloud"), ToolRegistry.search("tts").map { it.id })
     }
 
     @Test
@@ -75,7 +84,22 @@ class ToolRegistryTest {
         assertEquals("sign", ToolRegistry.byId("sign")?.viewerAction)
         assertEquals("signatures", ToolRegistry.byId("signatures")?.viewerAction)
         assertEquals("ocr", ToolRegistry.byId("ocr")?.viewerAction)
+        assertEquals("present", ToolRegistry.byId("present")?.viewerAction)
         assertTrue(ToolRegistry.byId("ocr")!!.isAvailable(demoEngine = false))
+    }
+
+    @Test
+    fun thePresentToolIsReadyAndSearchable() {
+        val present = ToolRegistry.byId("present")!!
+        assertEquals("Present", present.name)
+        assertEquals(ToolSection.DOCUMENT, present.section)
+        assertEquals(ToolDestination.VIEWER, present.destination)
+        assertEquals("present", present.viewerAction)
+        assertTrue(present.isAvailable(demoEngine = false))
+        assertEquals(ToolStatus.READY, present.status(demoEngine = false))
+        assertEquals(listOf("present"), ToolRegistry.search("slideshow").map { it.id })
+        assertEquals(listOf("present"), ToolRegistry.search("clicker").map { it.id })
+        assertEquals(listOf("present"), ToolRegistry.search("projector").map { it.id })
     }
 
     @Test
@@ -87,6 +111,48 @@ class ToolRegistryTest {
         assertEquals(ToolStatus.READY, compress.status(demoEngine = false))
         assertEquals(listOf("compress"), ToolRegistry.search("shrink").map { it.id })
         assertEquals(listOf("compress"), ToolRegistry.search("smaller").map { it.id })
+    }
+
+    @Test
+    fun theCropToolIsReadyAndSearchable() {
+        val crop = ToolRegistry.byId("crop")!!
+        assertEquals("Crop pages", crop.name)
+        assertEquals(ToolSection.DOCUMENT, crop.section)
+        assertEquals(ToolDestination.CROP, crop.destination)
+        assertTrue(crop.isAvailable(demoEngine = false))
+        assertEquals(ToolStatus.READY, crop.status(demoEngine = false))
+        assertEquals(listOf("crop"), ToolRegistry.search("trim").map { it.id })
+        assertEquals(listOf("crop"), ToolRegistry.search("cropbox").map { it.id })
+    }
+
+    @Test
+    fun theSnipToolIsReadyAndSearchable() {
+        val snip = ToolRegistry.byId("snip")!!
+        assertEquals("Snip table", snip.name)
+        assertEquals(ToolSection.DOCUMENT, snip.section)
+        assertEquals(ToolDestination.VIEWER, snip.destination)
+        assertEquals("snip", snip.viewerAction)
+        assertTrue(snip.isAvailable(demoEngine = false))
+        assertEquals(ToolStatus.READY, snip.status(demoEngine = false))
+        assertEquals(listOf("snip"), ToolRegistry.search("markdown").map { it.id })
+        assertEquals(listOf("snip"), ToolRegistry.search("tsv").map { it.id })
+    }
+
+    @Test
+    fun theColumnFlowToolIsReadyAndSearchable() {
+        val flow = ToolRegistry.byId("flow")!!
+        assertEquals("Column flow", flow.name)
+        assertEquals(ToolSection.DOCUMENT, flow.section)
+        assertEquals(ToolDestination.VIEWER, flow.destination)
+        assertEquals("flow", flow.viewerAction)
+        assertTrue(flow.isAvailable(demoEngine = false))
+        assertEquals(ToolStatus.READY, flow.status(demoEngine = false))
+        assertEquals(listOf("flow"), ToolRegistry.search("newspaper").map { it.id })
+        assertEquals(listOf("flow"), ToolRegistry.search("two column").map { it.id })
+        assertEquals(listOf("flow"), ToolRegistry.search("reading order").map { it.id })
+        // The card is distinct from reflow: one keeps the page's look, the
+        // other rewrites the text.
+        assertNotEquals("reflow", flow.id)
     }
 
     @Test
@@ -166,6 +232,18 @@ class ToolRegistryTest {
             listOf("redact", "redact-pages", "redact-find", "redact-properties", "sanitize"),
             ToolRegistry.tools.filter { it.section == ToolSection.REDACT }.map { it.id }
         )
+    }
+
+    @Test
+    fun theSafetyToolIsReadyAndSearchable() {
+        val safety = ToolRegistry.byId("safety")!!
+        assertEquals("Safety check", safety.name)
+        assertEquals(ToolSection.FORMS_SECURITY, safety.section)
+        assertEquals(ToolDestination.SAFETY, safety.destination)
+        assertTrue(safety.isAvailable(demoEngine = false))
+        assertEquals(ToolStatus.READY, safety.status(demoEngine = false))
+        assertEquals(listOf("safety"), ToolRegistry.search("malware").map { it.id })
+        assertEquals(listOf("safety"), ToolRegistry.search("phishing").map { it.id })
     }
 
     @Test

@@ -13,6 +13,7 @@ import androidx.compose.material.icons.outlined.Approval
 import androidx.compose.material.icons.outlined.CleaningServices
 import androidx.compose.material.icons.outlined.Comment
 import androidx.compose.material.icons.outlined.Compress
+import androidx.compose.material.icons.outlined.Crop
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.DeleteSweep
 import androidx.compose.material.icons.outlined.DocumentScanner
@@ -22,22 +23,27 @@ import androidx.compose.material.icons.outlined.FileDownload
 import androidx.compose.material.icons.outlined.FindReplace
 import androidx.compose.material.icons.outlined.FormatListNumbered
 import androidx.compose.material.icons.outlined.FormatUnderlined
+import androidx.compose.material.icons.outlined.Headphones
 import androidx.compose.material.icons.outlined.Highlight
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.Info
+import androidx.compose.material.icons.outlined.Slideshow
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.Photo
 import androidx.compose.material.icons.outlined.PostAdd
 import androidx.compose.material.icons.outlined.Print
 import androidx.compose.material.icons.outlined.Save
 import androidx.compose.material.icons.outlined.SaveAs
+import androidx.compose.material.icons.outlined.Security
 import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material.icons.outlined.SwapVert
+import androidx.compose.material.icons.outlined.TableRows
 import androidx.compose.material.icons.outlined.Tag
 import androidx.compose.material.icons.outlined.TextFields
 import androidx.compose.material.icons.outlined.TextSnippet
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material.icons.outlined.Verified
+import androidx.compose.material.icons.outlined.ViewColumn
 import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.ui.graphics.vector.ImageVector
 
@@ -65,7 +71,7 @@ enum class ToolStatus(val label: String) {
 }
 
 /** Where the All tools flow goes after the user chooses a PDF. */
-enum class ToolDestination { ORGANIZER, VIEWER, INFO, NEW_PDF, SCAN, COMPRESS, MARK, EXPORT_IMAGES }
+enum class ToolDestination { ORGANIZER, VIEWER, INFO, NEW_PDF, SCAN, COMPRESS, MARK, EXPORT_IMAGES, CROP, SAFETY }
 
 /**
  * One tool in the registry.
@@ -95,7 +101,7 @@ data class ToolDefinition(
     val organizerHint: String? = null,
     /** Viewer tools: the mode to switch into ("text", "image", "select", "highlight", "ink", "note"). */
     val viewerTool: String? = null,
-    /** Viewer tools: a panel to open instead of a markup mode ("comments", "stamps", "signatures", "ocr"). */
+    /** Viewer tools: a panel to open instead of a markup mode ("comments", "stamps", "signatures", "ocr", "snip"). */
     val viewerAction: String? = null,
     /** Viewer tools: also open the form-fill panel. */
     val opensForms: Boolean = false,
@@ -366,6 +372,18 @@ object ToolRegistry {
             viewerAction = "signatures"
         ),
         ToolDefinition(
+            id = "safety",
+            name = "Safety check",
+            description = "Look for scripts, actions, attachments and misleading links without running them.",
+            icon = Icons.Outlined.Security,
+            section = ToolSection.FORMS_SECURITY,
+            keywords = listOf(
+                "safety", "security", "javascript", "script", "link", "attachment",
+                "virus", "malware", "phishing", "scan", "check"
+            ),
+            destination = ToolDestination.SAFETY
+        ),
+        ToolDefinition(
             id = "protect",
             name = "Protect / Encrypt",
             description = "Password-protect a PDF. Protected files open today; writing encryption is coming soon.",
@@ -413,6 +431,15 @@ object ToolRegistry {
             destination = ToolDestination.COMPRESS
         ),
         ToolDefinition(
+            id = "crop",
+            name = "Crop pages",
+            description = "Trim white margins or set a crop box on selected pages.",
+            icon = Icons.Outlined.Crop,
+            section = ToolSection.DOCUMENT,
+            keywords = listOf("crop", "trim", "margins", "white space", "cropbox", "auto crop"),
+            destination = ToolDestination.CROP
+        ),
+        ToolDefinition(
             id = "watermark",
             name = "Watermark",
             description = "Put a text or picture watermark on the pages.",
@@ -452,6 +479,67 @@ object ToolRegistry {
             supported = true,
             viewerAction = "export-images",
             destination = ToolDestination.EXPORT_IMAGES
+        ),
+        ToolDefinition(
+            id = "present",
+            name = "Present",
+            description = "Show pages full screen with a timer, a pointer and an external display.",
+            icon = Icons.Outlined.Slideshow,
+            section = ToolSection.DOCUMENT,
+            keywords = listOf(
+                "present", "presentation", "slideshow", "full screen", "projector",
+                "external display", "timer", "clicker", "pointer", "laser"
+            ),
+            viewerAction = "present"
+        ),
+        ToolDefinition(
+            id = "reflow",
+            name = "Reflow",
+            description = "Read the text as one column, sized for the screen.",
+            icon = Icons.Outlined.TextSnippet,
+            section = ToolSection.DOCUMENT,
+            keywords = listOf(
+                "reflow", "read", "reading", "text", "article", "column", "zoom",
+                "font size", "mobile", "fit text"
+            ),
+            viewerAction = "reflow"
+        ),
+        ToolDefinition(
+            id = "flow",
+            name = "Column flow",
+            description = "Read one column at a time, edge to edge, without pinching.",
+            icon = Icons.Outlined.ViewColumn,
+            section = ToolSection.DOCUMENT,
+            keywords = listOf(
+                "column", "columns", "flow", "two column", "three column",
+                "newspaper", "across columns", "reading order", "one thumb",
+                "auto flow", "zoom column"
+            ),
+            viewerAction = "flow"
+        ),
+        ToolDefinition(
+            id = "read-aloud",
+            name = "Read aloud",
+            description = "Hear the page read out, with the spoken word highlighted. Keeps reading with the screen off.",
+            icon = Icons.Outlined.Headphones,
+            section = ToolSection.DOCUMENT,
+            keywords = listOf(
+                "read aloud", "read out", "speak", "speech", "voice", "listen",
+                "audio", "text to speech", "tts", "headphones", "narrate"
+            ),
+            viewerAction = "read-aloud"
+        ),
+        ToolDefinition(
+            id = "snip",
+            name = "Snip table",
+            description = "Draw a box around a table and copy it out as Markdown, CSV, TSV or plain text.",
+            icon = Icons.Outlined.TableRows,
+            section = ToolSection.DOCUMENT,
+            keywords = listOf(
+                "snip", "table", "extract", "copy table", "markdown", "csv", "tsv",
+                "scanned table", "ocr table"
+            ),
+            viewerAction = "snip"
         ),
         ToolDefinition(
             id = "info",
