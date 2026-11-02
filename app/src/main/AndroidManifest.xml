@@ -1,6 +1,18 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- T64: the background reader keeps reading with the screen off. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!-- T64: the speech engine is found through this action. -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.TTS_SERVICE" />
+        </intent>
+    </queries>
+
     <application
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
@@ -33,6 +45,19 @@
                 <data android:mimeType="application/vnd.ms-powerpoint" />
             </intent-filter>
         </activity>
+        <!-- T64: the background reader. -->
+        <service
+            android:name=".speech.ReadAloudService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
+        <!-- T64: the headset and lock-screen media buttons. -->
+        <receiver
+            android:name=".speech.ReadAloudMediaButtonReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MEDIA_BUTTON" />
+            </intent-filter>
+        </receiver>
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"
