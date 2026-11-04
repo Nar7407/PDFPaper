@@ -72,6 +72,11 @@ android {
     composeOptions {
         kotlinCompilerExtensionVersion = "1.5.14"
     }
+    testOptions {
+        // TocSplitViewModelTest constructs an Application; the android.jar stub
+        // constructor throws "Stub!" without this.
+        unitTests.isReturnDefaultValues = true
+    }
 }
 
 dependencies {

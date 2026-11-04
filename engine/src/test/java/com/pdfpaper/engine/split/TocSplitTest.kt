@@ -45,15 +45,23 @@ class TocSplitTest {
 
     // ---------------------------------------------------------------- PDF Fixture Builders
 
+    /** Page i of [createBookPdf] is this object number, above every extra object. */
+    private fun pageObjNum(index: Int): Int = 100 + index
+
     /**
      * Creates a test PDF with [pageCount] pages, where each page contains "Page {index + 1} content".
-     * Additional objects (outlines, names, info, acroform) can be appended via [extraObjects].
+     * Additional objects (outlines, names, info, acroform) can be appended via [extraObjects];
+     * page i is object [pageObjNum]`(i)`, so no extra object can replace a page.
+     * [pageEntries] appends raw dictionary entries to a page, by page index.
+     * [withHeadings] gives every page a large heading line above its body line.
      */
     private fun createBookPdf(
         pageCount: Int,
         extraCatalog: String = "",
         extraTrailer: String = "",
-        extraObjects: List<TestObj> = emptyList()
+        extraObjects: List<TestObj> = emptyList(),
+        pageEntries: Map<Int, String> = emptyMap(),
+        withHeadings: Boolean = false
     ): ByteArray {
         val objects = mutableListOf<TestObj>()
         val pageRefs = mutableListOf<String>()
@@ -62,7 +70,7 @@ class TocSplitTest {
         // Object 2: Pages root
         // Object 3: Font
         // Objects 4..(3 + pageCount): Content streams
-        // Objects (4 + pageCount)..(3 + 2 * pageCount): Page dicts
+        // Objects 100..(99 + pageCount): Page dicts
         val fontObjNum = 3
         objects += TestObj(fontObjNum, 0, "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>")
 
@@ -71,7 +79,12 @@ class TocSplitTest {
         for (i in 0 until pageCount) {
             val cNum = nextNum++
             contentObjNums += cNum
-            val streamText = "BT /F1 12 Tf 50 700 Td (Page ${i + 1} content) Tj ET"
+            val streamText = if (withHeadings) {
+                "BT /F1 16 Tf 50 700 Td (Chapter ${i + 1}) Tj ET\n" +
+                    "BT /F1 10 Tf 50 660 Td (Page ${i + 1} content continues on this page.) Tj ET"
+            } else {
+                "BT /F1 12 Tf 50 700 Td (Page ${i + 1} content) Tj ET"
+            }
             val streamBytes = streamText.toByteArray(StandardCharsets.US_ASCII)
             val header = "<< /Length ${streamBytes.size} >>\nstream\n"
             val footer = "\nendstream"
@@ -83,12 +96,8 @@ class TocSplitTest {
             objects += TestObj(cNum, 0, fullBytes)
         }
 
-        val pageObjNums = mutableListOf<Int>()
-        for (i in 0 until pageCount) {
-            val pNum = nextNum++
-            pageObjNums += pNum
-            pageRefs += "$pNum 0 R"
-        }
+        val pageObjNums = (0 until pageCount).map { pageObjNum(it) }
+        for (pNum in pageObjNums) pageRefs += "$pNum 0 R"
 
         for (i in 0 until pageCount) {
             val pNum = pageObjNums[i]
@@ -97,7 +106,7 @@ class TocSplitTest {
                 pNum, 0,
                 "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] " +
                     "/Resources << /Font << /F1 $fontObjNum 0 R >> >> " +
-                    "/Contents $cNum 0 R >>"
+                    "/Contents $cNum 0 R ${pageEntries[i].orEmpty()}>>"
             )
         }
 
@@ -295,24 +304,24 @@ class TocSplitTest {
             // Outlines root
             TestObj(10, 0, "<< /Type /Outlines /First 11 0 R /Last 14 0 R /Count 4 >>"),
             // 11: Explicit destination [pageRef /Fit]
-            TestObj(11, 0, "<< /Title (Explicit) /Parent 10 0 R /Dest [6 0 R /Fit] /Next 12 0 R >>"),
+            TestObj(11, 0, "<< /Title (Explicit) /Parent 10 0 R /Dest [100 0 R /Fit] /Next 12 0 R >>"),
             // 12: Action /GoTo with /D [pageRef /XYZ 0 500 0]
             TestObj(
                 12, 0,
-                "<< /Title (ActionGoTo) /Parent 10 0 R /A << /S /GoTo /D [7 0 R /XYZ 0 500 0] >> /Prev 11 0 R /Next 13 0 R >>"
+                "<< /Title (ActionGoTo) /Parent 10 0 R /A << /S /GoTo /D [101 0 R /XYZ 0 500 0] >> /Prev 11 0 R /Next 13 0 R >>"
             ),
             // 13: Named destination "ch3_dest" resolved through /Dests dictionary
             TestObj(13, 0, "<< /Title (NamedDest) /Parent 10 0 R /Dest /ch3_dest /Prev 12 0 R /Next 14 0 R >>"),
             // 14: Indirect destination reference -> points to obj 15
             TestObj(14, 0, "<< /Title (IndirectDest) /Parent 10 0 R /Dest 15 0 R /Prev 13 0 R >>"),
             // 15: The destination array object
-            TestObj(15, 0, "[9 0 R /Fit]")
+            TestObj(15, 0, "[103 0 R /Fit]")
         )
 
-        // 4 pages total (pages are objs 6, 7, 8, 9)
+        // 4 pages total (pages are objs 100, 101, 102, 103)
         val pdf = createBookPdf(
             pageCount = 4,
-            extraCatalog = "/Outlines 10 0 R /Dests << /ch3_dest [8 0 R /Fit] >>",
+            extraCatalog = "/Outlines 10 0 R /Dests << /ch3_dest [102 0 R /Fit] >>",
             extraObjects = extraObjs
         )
 
@@ -340,11 +349,11 @@ class TocSplitTest {
         val extraObjs = listOf(
             TestObj(10, 0, "<< /Type /Outlines /First 11 0 R /Last 13 0 R /Count 3 >>"),
             // 11: Valid entry to page 0
-            TestObj(11, 0, "<< /Title (Valid Start) /Parent 10 0 R /Dest [6 0 R /Fit] /Next 12 0 R >>"),
+            TestObj(11, 0, "<< /Title (Valid Start) /Parent 10 0 R /Dest [100 0 R /Fit] /Next 12 0 R >>"),
             // 12: Bad destination (points to non-existent object 999 0 R)
             TestObj(12, 0, "<< /Title (Bad Target) /Parent 10 0 R /Dest [999 0 R /Fit] /Prev 11 0 R /Next 13 0 R >>"),
-            // 13: Valid entry to page 2 (page obj 8)
-            TestObj(13, 0, "<< /Title (Valid End) /Parent 10 0 R /Dest [8 0 R /Fit] /Prev 12 0 R >>")
+            // 13: Valid entry to page 2 (page obj 102)
+            TestObj(13, 0, "<< /Title (Valid End) /Parent 10 0 R /Dest [102 0 R /Fit] /Prev 12 0 R >>")
         )
 
         val pdf = createBookPdf(
@@ -374,12 +383,12 @@ class TocSplitTest {
         // Acceptance requirement: book with out-of-order entries
         val extraObjs = listOf(
             TestObj(10, 0, "<< /Type /Outlines /First 11 0 R /Last 13 0 R /Count 3 >>"),
-            // 11: Points to page 2 (obj 8)
-            TestObj(11, 0, "<< /Title (Chapter Later) /Parent 10 0 R /Dest [8 0 R /Fit] /Next 12 0 R >>"),
-            // 12: Points to page 0 (obj 6)
-            TestObj(12, 0, "<< /Title (Chapter Earlier) /Parent 10 0 R /Dest [6 0 R /Fit] /Prev 11 0 R /Next 13 0 R >>"),
-            // 13: Points to page 1 (obj 7)
-            TestObj(13, 0, "<< /Title (Chapter Middle) /Parent 10 0 R /Dest [7 0 R /Fit] /Prev 12 0 R >>")
+            // 11: Points to page 2 (obj 102)
+            TestObj(11, 0, "<< /Title (Chapter Later) /Parent 10 0 R /Dest [102 0 R /Fit] /Next 12 0 R >>"),
+            // 12: Points to page 0 (obj 100)
+            TestObj(12, 0, "<< /Title (Chapter Earlier) /Parent 10 0 R /Dest [100 0 R /Fit] /Prev 11 0 R /Next 13 0 R >>"),
+            // 13: Points to page 1 (obj 101)
+            TestObj(13, 0, "<< /Title (Chapter Middle) /Parent 10 0 R /Dest [101 0 R /Fit] /Prev 12 0 R >>")
         )
 
         val pdf = createBookPdf(
@@ -413,11 +422,11 @@ class TocSplitTest {
     fun multipleEntriesOnSamePageReportIssueAndDoNotProduceZeroPageParts() {
         val extraObjs = listOf(
             TestObj(10, 0, "<< /Type /Outlines /First 11 0 R /Last 13 0 R /Count 3 >>"),
-            // Two entries point to page 0 (obj 6)
-            TestObj(11, 0, "<< /Title (Overview) /Parent 10 0 R /Dest [6 0 R /Fit] /Next 12 0 R >>"),
-            TestObj(12, 0, "<< /Title (Detailed Intro) /Parent 10 0 R /Dest [6 0 R /Fit] /Prev 11 0 R /Next 13 0 R >>"),
-            // Third points to page 2 (obj 8)
-            TestObj(13, 0, "<< /Title (Next Part) /Parent 10 0 R /Dest [8 0 R /Fit] /Prev 12 0 R >>")
+            // Two entries point to page 0 (obj 100)
+            TestObj(11, 0, "<< /Title (Overview) /Parent 10 0 R /Dest [100 0 R /Fit] /Next 12 0 R >>"),
+            TestObj(12, 0, "<< /Title (Detailed Intro) /Parent 10 0 R /Dest [100 0 R /Fit] /Prev 11 0 R /Next 13 0 R >>"),
+            // Third points to page 2 (obj 102)
+            TestObj(13, 0, "<< /Title (Next Part) /Parent 10 0 R /Dest [102 0 R /Fit] /Prev 12 0 R >>")
         )
 
         val pdf = createBookPdf(
@@ -470,8 +479,8 @@ class TocSplitTest {
     fun defaultBoundaryDoesNotDuplicateBoundaryPage() {
         val extraObjs = listOf(
             TestObj(10, 0, "<< /Type /Outlines /First 11 0 R /Last 12 0 R /Count 2 >>"),
-            TestObj(11, 0, "<< /Title (Part A) /Parent 10 0 R /Dest [6 0 R /Fit] /Next 12 0 R >>"),
-            TestObj(12, 0, "<< /Title (Part B) /Parent 10 0 R /Dest [8 0 R /Fit] /Prev 11 0 R >>")
+            TestObj(11, 0, "<< /Title (Part A) /Parent 10 0 R /Dest [100 0 R /Fit] /Next 12 0 R >>"),
+            TestObj(12, 0, "<< /Title (Part B) /Parent 10 0 R /Dest [102 0 R /Fit] /Prev 11 0 R >>")
         )
         // 5 pages: Part A starts at 0, Part B starts at 2
         val pdf = createBookPdf(pageCount = 5, extraCatalog = "/Outlines 10 0 R", extraObjects = extraObjs)
@@ -487,8 +496,8 @@ class TocSplitTest {
     fun duplicateBoundaryPageOptionIncludesBoundaryInBothParts() {
         val extraObjs = listOf(
             TestObj(10, 0, "<< /Type /Outlines /First 11 0 R /Last 12 0 R /Count 2 >>"),
-            TestObj(11, 0, "<< /Title (Part A) /Parent 10 0 R /Dest [6 0 R /Fit] /Next 12 0 R >>"),
-            TestObj(12, 0, "<< /Title (Part B) /Parent 10 0 R /Dest [8 0 R /Fit] /Prev 11 0 R >>")
+            TestObj(11, 0, "<< /Title (Part A) /Parent 10 0 R /Dest [100 0 R /Fit] /Next 12 0 R >>"),
+            TestObj(12, 0, "<< /Title (Part B) /Parent 10 0 R /Dest [102 0 R /Fit] /Prev 11 0 R >>")
         )
         // 5 pages: Part A starts at 0, Part B starts at 2
         val pdf = createBookPdf(pageCount = 5, extraCatalog = "/Outlines 10 0 R", extraObjects = extraObjs)
@@ -504,7 +513,7 @@ class TocSplitTest {
     fun lastRangeAlwaysEndsAtDocumentEnd() {
         val extraObjs = listOf(
             TestObj(10, 0, "<< /Type /Outlines /First 11 0 R /Last 11 0 R /Count 1 >>"),
-            TestObj(11, 0, "<< /Title (Only Chapter) /Parent 10 0 R /Dest [6 0 R /Fit] >>")
+            TestObj(11, 0, "<< /Title (Only Chapter) /Parent 10 0 R /Dest [100 0 R /Fit] >>")
         )
         val pdf = createBookPdf(pageCount = 10, extraCatalog = "/Outlines 10 0 R", extraObjects = extraObjs)
         open(pdf).use { doc ->
@@ -615,24 +624,25 @@ class TocSplitTest {
         // Link 2: points to page 3 (cross-part to part 2)
         val extraObjs = listOf(
             TestObj(10, 0, "<< /Type /Outlines /First 11 0 R /Last 12 0 R /Count 2 >>"),
-            TestObj(11, 0, "<< /Title (Part 1) /Parent 10 0 R /Dest [6 0 R /Fit] /Next 12 0 R >>"),
-            TestObj(12, 0, "<< /Title (Part 2) /Parent 10 0 R /Dest [8 0 R /Fit] /Prev 11 0 R >>"),
-            // Annotations on page 0 (obj 6):
+            TestObj(11, 0, "<< /Title (Part 1) /Parent 10 0 R /Dest [100 0 R /Fit] /Next 12 0 R >>"),
+            TestObj(12, 0, "<< /Title (Part 2) /Parent 10 0 R /Dest [102 0 R /Fit] /Prev 11 0 R >>"),
+            // Annotations on page 0 (obj 100):
             TestObj(
                 20, 0,
-                "<< /Type /Annot /Subtype /Link /Rect [10 10 50 20] /Dest [7 0 R /Fit] >>" // to page 1
+                "<< /Type /Annot /Subtype /Link /Rect [10 10 50 20] /Dest [101 0 R /Fit] >>" // to page 1
             ),
             TestObj(
                 21, 0,
-                "<< /Type /Annot /Subtype /Link /Rect [60 10 100 20] /Dest [9 0 R /Fit] >>" // to page 3
+                "<< /Type /Annot /Subtype /Link /Rect [60 10 100 20] /Dest [103 0 R /Fit] >>" // to page 3
             )
         )
 
-        // Modify page 0 to have /Annots [20 0 R 21 0 R]
+        // Page 0 carries the two links, so part 1 keeps only the same-part one.
         val pdf = createBookPdf(
             pageCount = 4,
             extraCatalog = "/Outlines 10 0 R",
-            extraObjects = extraObjs
+            extraObjects = extraObjs,
+            pageEntries = mapOf(0 to "/Annots [20 0 R 21 0 R] ")
         )
 
         open(pdf).use { doc ->
@@ -665,8 +675,8 @@ class TocSplitTest {
         // page 2 -> Decimal starting at 1 (/D /St 1)
         val extraObjs = listOf(
             TestObj(10, 0, "<< /Type /Outlines /First 11 0 R /Last 12 0 R /Count 2 >>"),
-            TestObj(11, 0, "<< /Title (Prelims) /Parent 10 0 R /Dest [6 0 R /Fit] /Next 12 0 R >>"),
-            TestObj(12, 0, "<< /Title (Body) /Parent 10 0 R /Dest [8 0 R /Fit] /Prev 11 0 R >>"),
+            TestObj(11, 0, "<< /Title (Prelims) /Parent 10 0 R /Dest [100 0 R /Fit] /Next 12 0 R >>"),
+            TestObj(12, 0, "<< /Title (Body) /Parent 10 0 R /Dest [102 0 R /Fit] /Prev 11 0 R >>"),
             TestObj(15, 0, "<< /Nums [0 << /S /r >> 2 << /S /D /St 1 >>] >>")
         )
 
@@ -699,12 +709,12 @@ class TocSplitTest {
     fun writtenPartsPreserveDocumentInfoMetadataAndAcroFormFields() {
         val extraObjs = listOf(
             TestObj(10, 0, "<< /Type /Outlines /First 11 0 R /Last 11 0 R /Count 1 >>"),
-            TestObj(11, 0, "<< /Title (Ch 1) /Parent 10 0 R /Dest [6 0 R /Fit] >>"),
+            TestObj(11, 0, "<< /Title (Ch 1) /Parent 10 0 R /Dest [100 0 R /Fit] >>"),
             // Info dict
             TestObj(15, 0, "<< /Title (Master Book) /Author (Jane Doe) >>"),
             // AcroForm
             TestObj(16, 0, "<< /Fields [17 0 R] >>"),
-            TestObj(17, 0, "<< /FT /Tx /T (SignatureField) /P 6 0 R /Rect [10 10 100 30] >>")
+            TestObj(17, 0, "<< /FT /Tx /T (SignatureField) /P 100 0 R /Rect [10 10 100 30] >>")
         )
 
         val pdf = createBookPdf(
@@ -812,8 +822,8 @@ class TocSplitTest {
 
     @Test
     fun headingFallbackFindsHeadingsWhenOutlineMissing() {
-        // Document without outline, but text contains clear headings
-        val pdf = createBookPdf(pageCount = 4)
+        // Document without outline; every page has a large heading above its body text.
+        val pdf = createBookPdf(pageCount = 4, withHeadings = true)
         open(pdf).use { doc ->
             val plan = TocSplit.planHeadings(doc, TocSplitOptions(level = 1, source = TocSplitSource.HEADINGS))
             assertEquals(TocSplitSource.HEADINGS, plan.source)

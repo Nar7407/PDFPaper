@@ -53,7 +53,8 @@ class TocSplitDeviceTest {
 
     private fun createBookPdf(
         pageCount: Int,
-        titlesAndPages: List<Pair<String, Int>> = emptyList()
+        titlesAndPages: List<Pair<String, Int>> = emptyList(),
+        withHeadings: Boolean = false
     ): File {
         val objects = mutableListOf<TestObj>()
         val pageRefs = mutableListOf<String>()
@@ -66,7 +67,12 @@ class TocSplitDeviceTest {
         for (i in 0 until pageCount) {
             val cNum = nextNum++
             contentNums += cNum
-            val streamText = "BT /F1 12 Tf 50 700 Td (Page ${i + 1} chapter content) Tj ET"
+            val streamText = if (withHeadings) {
+                "BT /F1 16 Tf 50 700 Td (Chapter ${i + 1}) Tj ET\n" +
+                    "BT /F1 10 Tf 50 660 Td (Page ${i + 1} chapter content continues here.) Tj ET"
+            } else {
+                "BT /F1 12 Tf 50 700 Td (Page ${i + 1} chapter content) Tj ET"
+            }
             val streamBytes = streamText.toByteArray(StandardCharsets.US_ASCII)
             val header = "<< /Length ${streamBytes.size} >>\nstream\n"
             val footer = "\nendstream"
@@ -259,7 +265,8 @@ class TocSplitDeviceTest {
 
     @Test
     fun noOutlineBookOffersFallbacksEndToEnd() {
-        val pdfFile = createBookPdf(pageCount = 4, titlesAndPages = emptyList())
+        // No outline; the pages carry real headings so "Detect headings" finds them.
+        val pdfFile = createBookPdf(pageCount = 4, withHeadings = true)
 
         val viewModel = TocSplitViewModel(
             application = context.applicationContext as android.app.Application
