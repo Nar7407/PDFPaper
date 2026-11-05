@@ -629,4 +629,23 @@ object UiTags {
 
     fun tocSplitLevelTag(level: Int): String = "toc_split_level_$level"
     fun tocSplitPartTag(id: String): String = "toc_split_part_$id"
+
+    // Task T68b: Annotation layers bottom sheet and active indicator.
+    const val LAYERS_SHEET = "viewer_layers_sheet"
+    const val LAYERS_INDICATOR = "viewer_layers_indicator"
+    const val LAYERS_BUTTON = "viewer_layers_button"
+    const val LAYERS_ROW_HIGHLIGHT = "layers_row_highlight"
+    const val LAYERS_ROW_UNDERLINE = "layers_row_underline"
+    const val LAYERS_ROW_STRIKEOUT = "layers_row_strikeout"
+    const val LAYERS_ROW_INK = "layers_row_ink"
+    const val LAYERS_ROW_NOTE = "layers_row_note"
+    const val LAYERS_ROW_STAMP = "layers_row_stamp"
+    const val LAYERS_ROW_FORM_FIELD = "layers_row_form_field"
+    const val LAYERS_ROW_OTHER = "layers_row_other"
+    const val LAYERS_BTN_SHOW_ALL = "layers_btn_show_all"
+    const val LAYERS_BTN_HIDE_ALL = "layers_btn_hide_all"
+    const val LAYERS_NON_FILTERABLE_NOTICE = "layers_non_filterable_notice"
+
+    fun layersColorChip(rgb: Int): String = "layers_chip_%06X".format(java.util.Locale.ROOT, rgb and 0xFFFFFF)
+    fun layersSoloButton(rgb: Int): String = "layers_solo_%06X".format(java.util.Locale.ROOT, rgb and 0xFFFFFF)
 }

@@ -1,5 +1,6 @@
 package com.pdfpaper.app.render
 
+import com.pdfpaper.engine.annot.AnnotationFilter
 import com.pdfpaper.engine.export.PageRaster
 import com.pdfpaper.engine.export.PageRasterizer
 import com.pdfpaper.engine.image.ExternalImageDecoder
@@ -42,4 +43,11 @@ object AndroidPageRasterizer : PageRasterizer {
 
     /** Font cache directory the viewer uses, so exports do not re-read fonts. */
     fun fontDir(filesDir: File?): File? = filesDir?.let { File(it, "fonts") }
+
+    /**
+     * T68b configured page rasterizer: produces a [PageRasterizer] configured with
+     * the given [filter].
+     */
+    operator fun invoke(filter: AnnotationFilter = AnnotationFilter.SHOW_ALL): PageRasterizer =
+        TODO("T68b")
 }

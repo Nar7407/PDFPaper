@@ -11,6 +11,7 @@ import com.pdfpaper.app.data.DocumentLookStore
 import com.pdfpaper.app.data.LookResolution
 import com.pdfpaper.app.data.EinkResolution
 import com.pdfpaper.app.render.PageBitmapRenderer
+import com.pdfpaper.engine.annot.AnnotationFilter
 import com.pdfpaper.engine.eink.EinkSettings
 import com.pdfpaper.engine.io.FileSource
 import com.pdfpaper.engine.model.PdfDocument
@@ -82,6 +83,12 @@ class PagesViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _state = MutableStateFlow(PagesUiState())
     val state: StateFlow<PagesUiState> = _state.asStateFlow()
+
+    // T68b: Thumbnail annotation layers
+    val layerFilter: AnnotationFilter
+        get() = TODO("T68b")
+
+    fun refreshThumbnailLayers(): Unit = TODO("T68b")
 
     private val _plan = MutableStateFlow<List<PlanPage>>(emptyList())
     val plan: StateFlow<List<PlanPage>> = _plan.asStateFlow()

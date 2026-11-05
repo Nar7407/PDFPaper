@@ -48,6 +48,8 @@ import com.pdfpaper.app.render.AndroidImageDecoder
 import com.pdfpaper.app.render.AndroidRasterDecoder
 import com.pdfpaper.app.render.PageBitmapRenderer
 import com.pdfpaper.app.render.RenderedPage
+import com.pdfpaper.engine.annot.AnnotationFilter
+import com.pdfpaper.engine.annot.AnnotationFilterReport
 import com.pdfpaper.app.signatures.CertificateSummary
 import com.pdfpaper.app.signatures.DigitalCertificateStore
 import com.pdfpaper.app.signatures.PlatformTrustStore
@@ -408,6 +410,25 @@ class ViewerViewModel(application: Application) : AndroidViewModel(application) 
 
     private val _state = MutableStateFlow(ViewerUiState())
     val state: StateFlow<ViewerUiState> = _state.asStateFlow()
+
+    // ---- Annotation layers (T68b) ------------------------------------------
+
+    val annotationLayersState: StateFlow<AnnotationLayersState>
+        get() = TODO("T68b")
+
+    val annotationFilterReport: StateFlow<AnnotationFilterReport?>
+        get() = TODO("T68b")
+
+    val isLayersSheetOpen: StateFlow<Boolean>
+        get() = TODO("T68b")
+
+    fun openLayersSheet(): Unit = TODO("T68b")
+    fun closeLayersSheet(): Unit = TODO("T68b")
+    fun toggleLayerGroup(group: AnnotationLayerGroup): Unit = TODO("T68b")
+    fun toggleLayerColor(rgb: Int): Unit = TODO("T68b")
+    fun soloLayerColor(group: AnnotationLayerGroup, rgb: Int): Unit = TODO("T68b")
+    fun showAllLayers(): Unit = TODO("T68b")
+    fun hideAllLayers(): Unit = TODO("T68b")
 
     private val _pageBoxes = MutableStateFlow<List<PageBox>>(emptyList())
     val pageBoxes: StateFlow<List<PageBox>> = _pageBoxes.asStateFlow()

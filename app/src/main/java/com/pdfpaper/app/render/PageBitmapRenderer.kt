@@ -2,6 +2,7 @@ package com.pdfpaper.app.render
 
 import android.graphics.Bitmap
 import android.graphics.Canvas
+import com.pdfpaper.engine.annot.AnnotationFilter
 import com.pdfpaper.engine.eink.EinkPipeline
 import com.pdfpaper.engine.eink.EinkSettings
 import com.pdfpaper.engine.graphics.buildDisplayList
@@ -48,7 +49,8 @@ object PageBitmapRenderer {
         /** T62 colour look (filter and sliders) on top of the theme. */
         transform: ColorTransform = ColorTransform.NONE,
         /** T63 E-Ink / reflex display profile, applied after the page is painted. */
-        eink: EinkSettings = EinkSettings.OFF
+        eink: EinkSettings = EinkSettings.OFF,
+        annotationFilter: AnnotationFilter = AnnotationFilter.SHOW_ALL
     ): RenderedPage {
         val base = PageGeometry.boxOf(page)
         val box = if (extraRotation % 360 == 0) {
@@ -57,7 +59,7 @@ object PageBitmapRenderer {
             PageBox(base.left, base.bottom, base.right, base.top, normalizeRotation(base.rotate + extraRotation))
         }
         val plan = PageGeometry.plan(box, scale, maxPixels)
-        return render(page, plan, decoder, fontDir, theme, transform, eink)
+        return render(page, plan, decoder, fontDir, theme, transform, eink, annotationFilter)
     }
 
     /**
@@ -74,9 +76,10 @@ object PageBitmapRenderer {
         fontDir: File? = null,
         theme: PageTheme = PageTheme.OFF,
         transform: ColorTransform = ColorTransform.NONE,
-        eink: EinkSettings = EinkSettings.OFF
+        eink: EinkSettings = EinkSettings.OFF,
+        annotationFilter: AnnotationFilter = AnnotationFilter.SHOW_ALL
     ): RenderedPage =
-        render(page, PageGeometry.plan(box, scale, maxPixels), decoder, fontDir, theme, transform, eink)
+        render(page, PageGeometry.plan(box, scale, maxPixels), decoder, fontDir, theme, transform, eink, annotationFilter)
 
     /**
      * Renders one page with an explicit [plan] (T45 page export, which owns
@@ -89,8 +92,12 @@ object PageBitmapRenderer {
         fontDir: File? = null,
         theme: PageTheme = PageTheme.OFF,
         transform: ColorTransform = ColorTransform.NONE,
-        eink: EinkSettings = EinkSettings.OFF
+        eink: EinkSettings = EinkSettings.OFF,
+        annotationFilter: AnnotationFilter = AnnotationFilter.SHOW_ALL
     ): RenderedPage {
+        if (annotationFilter != AnnotationFilter.SHOW_ALL) {
+            TODO("T68b")
+        }
         val settings = eink.normalized()
         val bitmap = Bitmap.createBitmap(plan.pixelWidth, plan.pixelHeight, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)

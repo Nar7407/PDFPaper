@@ -11,7 +11,9 @@ import com.pdfpaper.app.data.ExportFolder
 import com.pdfpaper.app.data.SafExportFolder
 import com.pdfpaper.app.render.AndroidImageEncoder
 import com.pdfpaper.app.render.AndroidPageRasterizer
+import com.pdfpaper.app.ui.viewer.AnnotationOutputMode
 import com.pdfpaper.engine.export.ExportedPage
+import com.pdfpaper.engine.export.PageRasterizer
 import com.pdfpaper.engine.export.ImageExtractOptions
 import com.pdfpaper.engine.export.ImageFormat
 import com.pdfpaper.engine.export.PageExportOptions
@@ -89,6 +91,14 @@ class ExportImagesViewModel(application: Application) : AndroidViewModel(applica
 
     private val _state = MutableStateFlow(ExportImagesUiState())
     val state: StateFlow<ExportImagesUiState> = _state.asStateFlow()
+
+    // T68b: Annotation output policy
+    val annotationOutputMode: StateFlow<AnnotationOutputMode>
+        get() = TODO("T68b")
+
+    fun setAnnotationOutputMode(mode: AnnotationOutputMode): Unit = TODO("T68b")
+
+    fun resolvePageRasterizer(mode: AnnotationOutputMode): PageRasterizer = TODO("T68b")
 
     private var exportJob: Job? = null
     private var cancelRequested = false

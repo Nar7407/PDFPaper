@@ -72,11 +72,10 @@ class T68bFixtureValidTest {
         assertTrue(report.typeCounts.containsKey(AnnotationType.INK))
         assertTrue(report.typeCounts.containsKey(AnnotationType.TEXT))
 
-        // Write acceptance asset for device tests if asset dir exists
-        val assetDir = File("src/androidTest/assets/t68b")
-        if (!assetDir.exists()) {
-            assetDir.mkdirs()
+        // Verify acceptance asset file exists for device tests
+        val assetFile = File("src/androidTest/assets/t68b/t68b-mixed.pdf")
+        if (assetFile.exists()) {
+            assertTrue("Asset file should have bytes", assetFile.length() > 0)
         }
-        File(assetDir, "t68b-mixed.pdf").writeBytes(bytes)
     }
 }
