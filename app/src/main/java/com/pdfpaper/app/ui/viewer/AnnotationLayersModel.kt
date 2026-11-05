@@ -56,6 +56,20 @@ enum class AnnotationOutputMode {
 }
 
 /**
+ * The engine filter an output mode resolves to. [AnnotationOutputMode.ALL]
+ * shows every annotation, [AnnotationOutputMode.NONE] shows none, and
+ * [AnnotationOutputMode.VISIBLE_ONLY] keeps whatever the caller's current
+ * layer selection already resolved to (passed in as [visibleOnly]).
+ */
+fun AnnotationOutputMode.toEngineFilter(
+    visibleOnly: AnnotationFilter = AnnotationFilter.SHOW_ALL
+): AnnotationFilter = when (this) {
+    AnnotationOutputMode.ALL -> AnnotationFilter.SHOW_ALL
+    AnnotationOutputMode.VISIBLE_ONLY -> visibleOnly
+    AnnotationOutputMode.NONE -> AnnotationFilter(types = emptySet())
+}
+
+/**
  * User-selected layer filter state for a document (T68).
  */
 data class AnnotationLayersState(

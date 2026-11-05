@@ -12,6 +12,7 @@ import com.pdfpaper.app.data.SafExportFolder
 import com.pdfpaper.app.render.AndroidImageEncoder
 import com.pdfpaper.app.render.AndroidPageRasterizer
 import com.pdfpaper.app.ui.viewer.AnnotationOutputMode
+import com.pdfpaper.app.ui.viewer.toEngineFilter
 import com.pdfpaper.engine.export.ExportedPage
 import com.pdfpaper.engine.export.PageRasterizer
 import com.pdfpaper.engine.export.ImageExtractOptions
@@ -93,12 +94,26 @@ class ExportImagesViewModel(application: Application) : AndroidViewModel(applica
     val state: StateFlow<ExportImagesUiState> = _state.asStateFlow()
 
     // T68b: Annotation output policy
+    private val _annotationOutputMode = MutableStateFlow(AnnotationOutputMode.ALL)
     val annotationOutputMode: StateFlow<AnnotationOutputMode>
-        get() = TODO("T68b")
+        get() = _annotationOutputMode
 
-    fun setAnnotationOutputMode(mode: AnnotationOutputMode): Unit = TODO("T68b")
+    fun setAnnotationOutputMode(mode: AnnotationOutputMode) {
+        _annotationOutputMode.value = mode
+    }
 
-    fun resolvePageRasterizer(mode: AnnotationOutputMode): PageRasterizer = TODO("T68b")
+    /**
+     * Build a page rasterizer whose annotation rendering honours the caller's
+     * output mode: ALL carries [AnnotationFilter.SHOW_ALL], VISIBLE_ONLY uses
+     * the viewer's current annotation filter, and NONE renders no annotations.
+     */
+    fun resolvePageRasterizer(mode: AnnotationOutputMode): PageRasterizer {
+        return when (mode) {
+            AnnotationOutputMode.ALL -> AndroidPageRasterizer
+            AnnotationOutputMode.VISIBLE_ONLY, AnnotationOutputMode.NONE ->
+                AndroidPageRasterizer(mode.toEngineFilter())
+        }
+    }
 
     private var exportJob: Job? = null
     private var cancelRequested = false
