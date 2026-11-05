@@ -23,6 +23,7 @@ import com.pdfpaper.app.data.ReadingMode
 import com.pdfpaper.app.data.ReadingOrientation
 import com.pdfpaper.app.data.ReadingRestore
 import com.pdfpaper.app.data.RestoredReading
+import com.pdfpaper.app.data.AnnotationLayerStore
 import com.pdfpaper.app.data.ReadingState
 import com.pdfpaper.app.data.ReadingStateStore
 import com.pdfpaper.app.data.RecentStore
@@ -50,6 +51,7 @@ import com.pdfpaper.app.render.PageBitmapRenderer
 import com.pdfpaper.app.render.RenderedPage
 import com.pdfpaper.engine.annot.AnnotationFilter
 import com.pdfpaper.engine.annot.AnnotationFilterReport
+import com.pdfpaper.engine.annot.annotationFilterReport
 import com.pdfpaper.app.signatures.CertificateSummary
 import com.pdfpaper.app.signatures.DigitalCertificateStore
 import com.pdfpaper.app.signatures.PlatformTrustStore
@@ -413,22 +415,75 @@ class ViewerViewModel(application: Application) : AndroidViewModel(application) 
 
     // ---- Annotation layers (T68b) ------------------------------------------
 
-    val annotationLayersState: StateFlow<AnnotationLayersState>
-        get() = TODO("T68b")
+    private val _annotationLayers = MutableStateFlow(AnnotationLayersState.SHOW_ALL)
+    val annotationLayersState: StateFlow<AnnotationLayersState> =
+        _annotationLayers.asStateFlow()
 
-    val annotationFilterReport: StateFlow<AnnotationFilterReport?>
-        get() = TODO("T68b")
+    private val _annotationFilterReport = MutableStateFlow<AnnotationFilterReport?>(null)
+    val annotationFilterReport: StateFlow<AnnotationFilterReport?> =
+        _annotationFilterReport.asStateFlow()
 
-    val isLayersSheetOpen: StateFlow<Boolean>
-        get() = TODO("T68b")
+    private val _isLayersSheetOpen = MutableStateFlow(false)
+    val isLayersSheetOpen: StateFlow<Boolean> = _isLayersSheetOpen.asStateFlow()
 
-    fun openLayersSheet(): Unit = TODO("T68b")
-    fun closeLayersSheet(): Unit = TODO("T68b")
-    fun toggleLayerGroup(group: AnnotationLayerGroup): Unit = TODO("T68b")
-    fun toggleLayerColor(rgb: Int): Unit = TODO("T68b")
-    fun soloLayerColor(group: AnnotationLayerGroup, rgb: Int): Unit = TODO("T68b")
-    fun showAllLayers(): Unit = TODO("T68b")
-    fun hideAllLayers(): Unit = TODO("T68b")
+    private val annotationLayerStore by lazy { AnnotationLayerStore(getApplication()) }
+    private var annotationReportJob: Job? = null
+
+    fun openLayersSheet() {
+        _isLayersSheetOpen.value = true
+    }
+
+    fun closeLayersSheet() {
+        _isLayersSheetOpen.value = false
+    }
+
+    fun toggleLayerGroup(group: AnnotationLayerGroup) = updateLayers { it.toggleGroup(group) }
+
+    fun toggleLayerColor(rgb: Int) = updateLayers { it.toggleColor(rgb) }
+
+    fun soloLayerColor(group: AnnotationLayerGroup, rgb: Int) =
+        updateLayers { it.soloColor(group, rgb) }
+
+    fun showAllLayers() = updateLayers { it.showAll() }
+
+    fun hideAllLayers() = updateLayers { it.hideAll() }
+
+    /**
+     * Applies and remembers one layer choice. Nothing is written to the PDF:
+     * the filter only decides what a render paints, and a hidden annotation
+     * still hides by its own /F flags (§12.5.3).
+     */
+    private fun updateLayers(change: (AnnotationLayersState) -> AnnotationLayersState) {
+        val next = change(_annotationLayers.value)
+        if (next == _annotationLayers.value) return
+        _annotationLayers.value = next
+        annotationLayerStore.save(lookFingerprint, next)
+        // Every bitmap above a page render was painted with the old filter.
+        presentCache.clear()
+        linkPreviews.clear()
+        reflowRegionCache.clear()
+        _flowBitmaps.value = emptyMap()
+        flowBitmapOrder.clear()
+        invalidateRenders()
+    }
+
+    /**
+     * Counts are document-wide, so they are computed once with the all-visible
+     * filter; a filter that is active only changes which of those annotations
+     * are painted, not what the document contains.
+     */
+    private fun loadAnnotationReport(document: PdfDocument) {
+        annotationReportJob?.cancel()
+        _annotationFilterReport.value = null
+        annotationReportJob = textScope.launch {
+            val report = runCatching {
+                document.annotationFilterReport(AnnotationFilter.SHOW_ALL)
+            }.getOrNull() ?: return@launch
+            if (this@ViewerViewModel.document === document) {
+                _annotationFilterReport.value = report
+            }
+        }
+    }
 
     private val _pageBoxes = MutableStateFlow<List<PageBox>>(emptyList())
     val pageBoxes: StateFlow<List<PageBox>> = _pageBoxes.asStateFlow()
@@ -1042,6 +1097,11 @@ class ViewerViewModel(application: Application) : AndroidViewModel(application) 
                     val location = opened.location
                     document = opened.document
                     pages = list
+                    // T68b: the layer choice is restored before "loaded", so
+                    // the first frame already paints with it.
+                    _annotationLayers.value = annotationLayerStore.load(lookFingerprint)
+                    _isLayersSheetOpen.value = false
+                    loadAnnotationReport(opened.document)
                     currentPath = location.value
                     currentDisplayName = displayNameOverride ?: location.displayName
                     localFilePath = if (location.isContent) null else location.value
@@ -5159,6 +5219,12 @@ class ViewerViewModel(application: Application) : AndroidViewModel(application) 
         _fit.value = FitContentState()
         _viewBoxes.value = emptyList()
         resetReflowState()
+        // T68b: layer state belongs to the document that was open.
+        annotationReportJob?.cancel()
+        annotationReportJob = null
+        _annotationFilterReport.value = null
+        _annotationLayers.value = AnnotationLayersState.SHOW_ALL
+        _isLayersSheetOpen.value = false
     }
 
     /** Text layout of one page; must be called on the document dispatcher. */

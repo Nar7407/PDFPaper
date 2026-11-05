@@ -68,3 +68,58 @@ stubs for steps 3 and 5):
 * com.pdfpaper.app.ui.pages.PagesThumbnailLayersTest: 2 failed (NotImplementedError: T68b)
 BUILD FAILED in 23s
 ```
+
+## Step 2 — viewer layer state: done
+
+### Implemented
+
+`app/src/main/java/com/pdfpaper/app/ui/viewer/ViewerViewModel.kt` only.
+
+* State: `_annotationLayers` (`AnnotationLayersState.SHOW_ALL`), `_annotationFilterReport`
+  (`null`), `_isLayersSheetOpen` (`false`), exposed as `StateFlow`s through the
+  existing public names. The store is a lazy `AnnotationLayerStore`.
+* `openLayersSheet()` / `closeLayersSheet()` flip the flag.
+* `toggleLayerGroup`, `toggleLayerColor`, `soloLayerColor`, `showAllLayers`,
+  `hideAllLayers` all go through one `updateLayers(change)`: an equal state is a
+  no-op, otherwise the immutable model change is published, saved through the
+  fingerprint-keyed store (which no-ops without a fingerprint) and every cache
+  above a page render is dropped (`presentCache`, `linkPreviews`,
+  `reflowRegionCache`, flow bitmaps + order, then `invalidateRenders()`).
+* Restore: on open success, right after the fingerprint is known and before
+  `_state.value = ViewerUiState(...)`, the saved state is loaded, the sheet is
+  closed and the report is requested.
+* Report: `loadAnnotationReport()` runs `PdfDocument.annotationFilterReport()`
+  once on the document dispatcher with `AnnotationFilter.SHOW_ALL` (counts are
+  filter-independent), ignores a failure, and only publishes when the same
+  document is still open.
+* Reset: `closeCurrentDocument()` cancels the report job, clears the report and
+  returns the layers to `SHOW_ALL` with the sheet closed.
+* Nothing is written to the PDF; `AnnotationFilter.toEngineFilter()` is still the
+  only bridge between the UI state and the engine.
+
+No engine, store, model or test file was changed in this step.
+
+### Real command output
+
+```
+> .\gradlew.bat :app:compileDebugKotlin :app:testDebugUnitTest --tests "com.pdfpaper.app.ui.pages.*"
+36 tests completed, 2 failed
+* PagesThumbnailLayersTest: 2 failed (NotImplementedError: T68b — step 3 stubs)
+BUILD FAILED in 59s
+```
+
+Full JVM suite and device-test compile (same 7 step-3/step-5 stub failures as
+before this step, so no regression; the androidTest warning is the existing
+unused `report` local in `ViewerLayersDeviceTest`):
+
+```
+> .\gradlew.bat :app:testDebugUnitTest :app:compileDebugAndroidTestKotlin
+585 tests completed, 7 failed
+* ExportAnnotationOutputModeTest: 5 failed (NotImplementedError: T68b — step 5)
+* PagesThumbnailLayersTest: 2 failed (NotImplementedError: T68b — step 3)
+
+> .\gradlew.bat :app:compileDebugAndroidTestKotlin
+w: .../ViewerLayersDeviceTest.kt:91:13 Variable 'report' is never used
+BUILD SUCCESSFUL in 14s
+```
+
