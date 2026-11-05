@@ -15,5 +15,10 @@ import com.pdfpaper.engine.page.PdfPage
  * and falls back to a synthetic appearance built from the annotation's geometry
  * otherwise.
  */
+fun PdfPage.buildAnnotationDisplayList(
+    filter: AnnotationFilter,
+    decoder: ExternalImageDecoder? = null
+): DisplayList = TODO("T68")
+
 fun PdfPage.buildAnnotationDisplayList(decoder: ExternalImageDecoder? = null): DisplayList =
     DisplayListBuilder(this, decoder).buildAnnotations(annotations())
