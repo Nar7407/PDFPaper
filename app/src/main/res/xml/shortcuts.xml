@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Task T48: static launcher shortcuts. Actions are handled by MainActivity
+     and routed by AppNav; none of them trusts a file name. -->
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_scan"
+        android:shortcutId="scan"
+        android:shortcutLongLabel="@string/shortcut_scan_long"
+        android:shortcutShortLabel="@string/shortcut_scan_short">
+        <intent
+            android:action="com.pdfpaper.app.action.SCAN"
+            android:targetClass="com.pdfpaper.app.MainActivity"
+            android:targetPackage="com.pdfpaper.app" />
+    </shortcut>
+    <shortcut
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_open"
+        android:shortcutId="open_pdf"
+        android:shortcutLongLabel="@string/shortcut_open_long"
+        android:shortcutShortLabel="@string/shortcut_open_short">
+        <intent
+            android:action="com.pdfpaper.app.action.OPEN_PDF"
+            android:targetClass="com.pdfpaper.app.MainActivity"
+            android:targetPackage="com.pdfpaper.app" />
+    </shortcut>
+    <shortcut
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_merge"
+        android:shortcutId="merge_pdfs"
+        android:shortcutLongLabel="@string/shortcut_merge_long"
+        android:shortcutShortLabel="@string/shortcut_merge_short">
+        <intent
+            android:action="com.pdfpaper.app.action.MERGE"
+            android:targetClass="com.pdfpaper.app.MainActivity"
+            android:targetPackage="com.pdfpaper.app" />
+    </shortcut>
+    <shortcut
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_recent"
+        android:shortcutId="recent_files"
+        android:shortcutLongLabel="@string/shortcut_recent_long"
+        android:shortcutShortLabel="@string/shortcut_recent_short">
+        <intent
+            android:action="com.pdfpaper.app.action.RECENT"
+            android:targetClass="com.pdfpaper.app.MainActivity"
+            android:targetPackage="com.pdfpaper.app" />
+    </shortcut>
+</shortcuts>

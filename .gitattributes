@@ -1,0 +1,10 @@
+# Keep binaries byte-exact: line-ending conversion would corrupt xref offsets.
+*.pdf binary
+*.jar binary
+*.bin binary
+*.ttf binary
+# OOXML packages are ZIPs and legacy .doc is an OLE container: never let git
+# touch their line endings.
+*.docx binary
+*.pptx binary
+*.doc binary

@@ -1,0 +1,18 @@
+*.iml
+.gradle/
+/local.properties
+/.idea/
+.DS_Store
+build/
+/captures
+.externalNativeBuild
+.cxx
+local.properties
+
+# Release signing material is never committed (T14).
+keystore.properties
+*.jks
+*.keystore
+
+# Superpowers scratch (ledger, briefs, review packages).
+.superpowers/

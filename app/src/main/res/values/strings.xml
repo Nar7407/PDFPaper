@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">PDFPaper</string>
+    <string name="shortcut_scan_short">Scan</string>
+    <string name="shortcut_scan_long">Scan a document</string>
+    <string name="shortcut_open_short">Open PDF</string>
+    <string name="shortcut_open_long">Open a PDF or Office file</string>
+    <string name="shortcut_merge_short">Merge PDFs</string>
+    <string name="shortcut_merge_long">Merge several PDFs</string>
+    <string name="shortcut_recent_short">Recent</string>
+    <string name="shortcut_recent_long">Open a recent document</string>
+    <string name="widget_label">PDFPaper recent documents</string>
+    <string name="widget_description">Open, scan and your three most recent documents</string>
+</resources>
