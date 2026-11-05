@@ -49,11 +49,13 @@ App (`:app`):
   another task's uncommitted work); the engine and app suites above were re-run
   green after that change.
 
-Note: this branch's HEAD already carries committed tests from other tasks
-(TocSplit, RegexSearch, ...) whose implementations and test fixtures are still
-uncommitted in the shared working tree, so the branch does not compile in an
-isolated checkout. Verification was therefore run in the shared worktree, as in
-previous sessions.
+The branch's HEAD also carried committed tests from other tasks (TocSplit,
+RegexSearch, ...) whose implementations and test fixtures were still
+uncommitted. Commit `4e443c1` adds those files unchanged (`:safety` module,
+build config, app and engine sources and tests). Verified afterwards in a clean
+worktree at that commit (`:engine:test :safety:test :app:testDebugUnitTest`):
+`BUILD SUCCESSFUL in 13m 30s`, 646 engine / 22 safety / 575 app tests, 0
+failures.
 
 ## Not done / known gaps
 
