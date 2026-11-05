@@ -21,10 +21,17 @@ import java.nio.ByteOrder
  */
 object AndroidPageRasterizer : PageRasterizer {
 
-    override fun rasterize(page: PdfPage, plan: PageRenderPlan): PageRaster? {
+    override fun rasterize(page: PdfPage, plan: PageRenderPlan): PageRaster? =
+        rasterize(page, plan, AnnotationFilter.SHOW_ALL)
+
+    private fun rasterize(
+        page: PdfPage,
+        plan: PageRenderPlan,
+        filter: AnnotationFilter
+    ): PageRaster? {
         if (plan.pixelWidth <= 0 || plan.pixelHeight <= 0) return null
         return try {
-            val rendered = PageBitmapRenderer.render(page, plan)
+            val rendered = PageBitmapRenderer.render(page, plan, annotationFilter = filter)
             val bitmap = rendered.bitmap
             try {
                 val buffer = ByteBuffer.allocate(plan.pixelWidth * plan.pixelHeight * 4)
@@ -48,6 +55,11 @@ object AndroidPageRasterizer : PageRasterizer {
      * T68b configured page rasterizer: produces a [PageRasterizer] configured with
      * the given [filter].
      */
-    operator fun invoke(filter: AnnotationFilter = AnnotationFilter.SHOW_ALL): PageRasterizer =
-        TODO("T68b")
+    operator fun invoke(filter: AnnotationFilter = AnnotationFilter.SHOW_ALL): PageRasterizer {
+        if (filter == AnnotationFilter.SHOW_ALL) return this
+        return object : PageRasterizer {
+            override fun rasterize(page: PdfPage, plan: PageRenderPlan): PageRaster? =
+                this@AndroidPageRasterizer.rasterize(page, plan, filter)
+        }
+    }
 }

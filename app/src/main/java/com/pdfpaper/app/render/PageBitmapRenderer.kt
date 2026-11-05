@@ -3,6 +3,7 @@ package com.pdfpaper.app.render
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import com.pdfpaper.engine.annot.AnnotationFilter
+import com.pdfpaper.engine.annot.buildAnnotationDisplayList
 import com.pdfpaper.engine.eink.EinkPipeline
 import com.pdfpaper.engine.eink.EinkSettings
 import com.pdfpaper.engine.graphics.buildDisplayList
@@ -95,9 +96,6 @@ object PageBitmapRenderer {
         eink: EinkSettings = EinkSettings.OFF,
         annotationFilter: AnnotationFilter = AnnotationFilter.SHOW_ALL
     ): RenderedPage {
-        if (annotationFilter != AnnotationFilter.SHOW_ALL) {
-            TODO("T68b")
-        }
         val settings = eink.normalized()
         val bitmap = Bitmap.createBitmap(plan.pixelWidth, plan.pixelHeight, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)
@@ -112,19 +110,21 @@ object PageBitmapRenderer {
         // PDF pages have no background of their own; viewers show them on white (§11.4.7 note).
         canvas.drawColor(transform.grade(painted.background).toArgb(1.0))
         val displayList = page.buildDisplayList(decoder)
+        // T68b: annotations are a separate list (§12.5), replayed inside the
+        // same transform so a filtered layer paints exactly like the page.
+        val annotations = page.buildAnnotationDisplayList(annotationFilter, decoder)
         canvas.save()
         canvas.concat(plan.matrix.intoAndroid())
-        renderDisplayList(
-            displayList,
-            AndroidRenderer(
-                canvas = canvas,
-                fontDir = fontDir,
-                theme = painted,
-                transform = transform,
-                eink = settings,
-                baseScale = plan.matrix.meanScale()
-            )
+        val renderer = AndroidRenderer(
+            canvas = canvas,
+            fontDir = fontDir,
+            theme = painted,
+            transform = transform,
+            eink = settings,
+            baseScale = plan.matrix.meanScale()
         )
+        renderDisplayList(displayList, renderer)
+        renderDisplayList(annotations, renderer)
         canvas.restore()
         if (settings.postProcessed) {
             val pixels = IntArray(plan.pixelWidth * plan.pixelHeight)
@@ -132,7 +132,7 @@ object PageBitmapRenderer {
             EinkPipeline.apply(pixels, settings)
             bitmap.setPixels(pixels, 0, plan.pixelWidth, 0, 0, plan.pixelWidth, plan.pixelHeight)
         }
-        return RenderedPage(plan, bitmap, displayList.warnings)
+        return RenderedPage(plan, bitmap, displayList.warnings + annotations.warnings)
     }
 
     private fun normalizeRotation(degrees: Int): Int = ((degrees % 360) + 360) % 360

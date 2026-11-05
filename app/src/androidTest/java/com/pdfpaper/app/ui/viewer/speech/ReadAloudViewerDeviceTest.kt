@@ -70,6 +70,12 @@ class ReadAloudViewerDeviceTest {
         override fun nextChapter() = Unit
 
         override fun previousChapter() = Unit
+
+        override fun setSpeed(rate: Float) = Unit
+
+        override fun setSleep(option: SleepOption) = Unit
+
+        override fun setVoice(key: SpeechVoiceKey?) = Unit
     }
 
     @After

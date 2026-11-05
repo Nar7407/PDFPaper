@@ -79,6 +79,11 @@ android {
         // constructor throws "Stub!" without this.
         unitTests.isReturnDefaultValues = true
     }
+    sourceSets {
+        // T68b: fixtures shared by the JVM unit tests and the device tests.
+        getByName("test").java.srcDir("src/sharedTest/java")
+        getByName("androidTest").java.srcDir("src/sharedTest/java")
+    }
 }
 
 dependencies {
