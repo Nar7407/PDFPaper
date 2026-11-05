@@ -1,7 +1,9 @@
 package com.pdfpaper.app.speech
 
 import com.pdfpaper.app.ui.viewer.speech.ReadAloudPlaybackState
+import com.pdfpaper.app.ui.viewer.speech.SleepOption
 import com.pdfpaper.app.ui.viewer.speech.SpeechPosition
+import com.pdfpaper.app.ui.viewer.speech.SpeechVoiceKey
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -64,5 +66,14 @@ object ReadAloudHub {
         fun previousParagraph()
         fun nextChapter()
         fun previousChapter()
+
+        /** Changes the pace; the current paragraph is replayed at it. */
+        fun setSpeed(rate: Float)
+
+        /** Sets how long the reading keeps going. */
+        fun setSleep(option: SleepOption)
+
+        /** Switches the voice; null asks for the device's default voice. */
+        fun setVoice(key: SpeechVoiceKey?)
     }
 }

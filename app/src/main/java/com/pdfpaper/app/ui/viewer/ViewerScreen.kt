@@ -83,6 +83,7 @@ import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenuItem
@@ -256,6 +257,7 @@ import com.pdfpaper.engine.render.PageRenderPlan
 import com.pdfpaper.engine.text.TextRect
 import com.pdfpaper.app.speech.ReadAloudHub
 import com.pdfpaper.app.ui.viewer.speech.ReadAloudBar
+import com.pdfpaper.app.ui.viewer.speech.ReadAloudSheet
 import com.pdfpaper.app.ui.viewer.speech.speechHighlight
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -497,6 +499,18 @@ fun ViewerScreen(
     // T64: the reading runs in the foreground service; the screen only shows
     // what the hub says it is doing and sends it commands.
     val readAloud by ReadAloudHub.state.collectAsState()
+    var showReadAloudSheet by rememberSaveable(path) { mutableStateOf(false) }
+    var speechOfferDismissed by rememberSaveable(path) { mutableStateOf(false) }
+    // T34: the paragraph reached is written whenever it changes, so a killed
+    // process loses at most the paragraph being spoken.
+    LaunchedEffect(readAloud.active, readAloud.pageIndex, readAloud.paragraphIndex) {
+        if (readAloud.active) {
+            viewModel.saveSpeechPosition(readAloud.pageIndex, readAloud.paragraphIndex)
+        }
+    }
+    LaunchedEffect(readAloud.active) {
+        if (!readAloud.active) showReadAloudSheet = false
+    }
 
     val demoEngine = EditingRuntime.isDemo(context)
     val activeToolName = activeToolId?.let { ToolRegistry.byId(it)?.name }
@@ -853,7 +867,10 @@ fun ViewerScreen(
     // T64: the reading asks the page into view once per request.
     LaunchedEffect(readAloud.scrollToken) {
         val page = readAloud.scrollPageIndex
-        if (readAloud.scrollToken != 0L && page in 0 until state.pageCount) {
+        if (readAloud.scrollToken != 0L &&
+            page in 0 until state.pageCount &&
+            AppSettings.speechAutoScroll(context)
+        ) {
             listState.scrollToItem(page)
         }
     }
@@ -2027,11 +2044,57 @@ fun ViewerScreen(
                 // T64: the reading's transport, when the service is reading.
                 if (readAloud.active) {
                     ReadAloudBar(
+                        onOpenOptions = { showReadAloudSheet = true },
                         modifier = Modifier
                             .align(Alignment.BottomCenter)
                             .padding(horizontal = 12.dp)
                             .padding(bottom = 76.dp)
                     )
+                }
+                if (showReadAloudSheet && readAloud.active) {
+                    ReadAloudSheet(
+                        state = readAloud,
+                        onDismiss = { showReadAloudSheet = false }
+                    )
+                }
+                // T34: a saved speech spot is an offer, never an automatic
+                // restart: starting to talk on open would surprise the reader.
+                if (!readAloud.active &&
+                    state.hasSavedSpeech &&
+                    !speechOfferDismissed
+                ) {
+                    Surface(
+                        color = MaterialTheme.colorScheme.secondaryContainer,
+                        contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                        shape = RoundedCornerShape(50),
+                        shadowElevation = 4.dp,
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .padding(horizontal = 12.dp)
+                            .padding(bottom = 76.dp)
+                            .testTag(UiTags.VIEWER_SPEECH_CONTINUE)
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                "Continue reading aloud from page ${state.startSpeechPage + 1}",
+                                style = MaterialTheme.typography.labelLarge,
+                                modifier = Modifier
+                                    .clickable {
+                                        speechOfferDismissed = true
+                                        viewModel.startReadAloud(
+                                            state.startSpeechPage,
+                                            state.startSpeechParagraph
+                                        )
+                                    }
+                                    .padding(start = 16.dp, top = 10.dp, bottom = 10.dp)
+                            )
+                            androidx.compose.material3.TextButton(
+                                onClick = { speechOfferDismissed = true }
+                            ) {
+                                Text("Not now")
+                            }
+                        }
+                    }
                 }
                 SnackbarHost(
                     hostState = snackbar,
@@ -4819,6 +4882,9 @@ private fun RegexSheetHost(
 ) {
     ModalBottomSheet(
         onDismissRequest = onDismiss,
+        // The panel and the results list need the whole sheet: a half-expanded
+        // sheet clips the last rows and the export actions.
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
         modifier = Modifier.testTag(UiTags.REGEX_SHEET)
     ) {
         // The sheet gives the grouped list a bounded height: a weighted

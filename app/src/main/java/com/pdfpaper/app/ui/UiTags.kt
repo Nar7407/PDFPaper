@@ -226,6 +226,15 @@ object UiTags {
     const val SETTINGS_THEME_INK = "settings_theme_ink"
     const val SETTINGS_THEME_DIM = "settings_theme_dim"
 
+    // Settings → Appearance: the app chrome theme and the Code style palettes.
+    const val SETTINGS_APPEARANCE = "settings_appearance"
+    const val SETTINGS_CODE_EACH_LAUNCH = "settings_code_each_launch"
+
+    fun appearanceOption(choice: String): String = "settings_appearance_$choice"
+    fun paletteRotationOption(rotation: String): String = "settings_palette_rotation_$rotation"
+    fun codePaletteOption(name: String): String =
+        "settings_code_palette_${name.replace(' ', '_').lowercase()}"
+
     fun viewerThemeOption(mode: String): String = "viewer_theme_$mode"
     fun settingsThemeMode(mode: String): String = "settings_theme_mode_$mode"
     fun settingsThemeInk(hex: String): String = "settings_theme_ink_${hex.removePrefix("#")}"
@@ -585,6 +594,39 @@ object UiTags {
     const val VIEWER_READ_ALOUD_PREVIOUS = "viewer_read_aloud_previous"
     const val VIEWER_READ_ALOUD_NEXT = "viewer_read_aloud_next"
     const val VIEWER_READ_ALOUD_STOP = "viewer_read_aloud_stop"
+    const val VIEWER_READ_ALOUD_OPTIONS = "viewer_read_aloud_options"
+    const val VIEWER_SPEECH_CONTINUE = "viewer_speech_continue"
+    const val READ_ALOUD_SHEET = "read_aloud_sheet"
+    const val READ_ALOUD_AUTO_SCROLL = "read_aloud_auto_scroll"
+    const val READ_ALOUD_VOICE_ROW = "read_aloud_voice_row"
+    const val READ_ALOUD_SYSTEM_VOICES = "read_aloud_system_voices"
+
+    fun readAloudSpeedTag(speed: Float): String = "read_aloud_speed_$speed"
+    const val SETTINGS_SPEECH_CARD = "settings_speech_card"
+    const val SETTINGS_SPEECH_VOICE = "settings_speech_voice"
+    const val SETTINGS_SPEECH_AUTO_SCROLL = "settings_speech_auto_scroll"
+
+    fun settingsSpeechSpeedTag(speed: Float): String = "settings_speech_speed_$speed"
+    fun settingsSpeechSleepTag(option: String): String = "settings_speech_sleep_$option"
+    fun readAloudSleepTag(option: String): String = "read_aloud_sleep_$option"
+    fun readAloudChapterTag(page: Int): String = "read_aloud_chapter_$page"
 
     fun flowSegment(page: Int, order: Int): String = "flow_segment_${page}_$order"
+
+    // T66: split by table of contents.
+    const val TOC_SPLIT_SCREEN = "toc_split_screen"
+    const val TOC_SPLIT_WARNING_BANNER = "toc_split_warning_banner"
+    const val TOC_SPLIT_NO_OUTLINE_DIALOG = "toc_split_no_outline_dialog"
+    const val TOC_SPLIT_FALLBACK_FIXED = "toc_split_fallback_fixed"
+    const val TOC_SPLIT_FALLBACK_HEADINGS = "toc_split_fallback_headings"
+    const val TOC_SPLIT_CONFLICT_DIALOG = "toc_split_conflict_dialog"
+    const val TOC_SPLIT_CONFLICT_REPLACE = "toc_split_conflict_replace"
+    const val TOC_SPLIT_EXPORT_FOLDER = "toc_split_export_folder"
+    const val TOC_SPLIT_SHARE_ZIP = "toc_split_share_zip"
+    const val TOC_SPLIT_PROGRESS = "toc_split_progress"
+    const val TOC_SPLIT_CANCEL = "toc_split_cancel"
+    const val TOC_SPLIT_SHARED_PAGE = "toc_split_shared_page"
+
+    fun tocSplitLevelTag(level: Int): String = "toc_split_level_$level"
+    fun tocSplitPartTag(id: String): String = "toc_split_part_$id"
 }

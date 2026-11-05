@@ -1,6 +1,8 @@
 package com.pdfpaper.app.ui.viewer.speech
 
 import com.pdfpaper.engine.geom.PdfRect
+import com.pdfpaper.engine.speech.ChapterSource
+import com.pdfpaper.engine.speech.SpeechChapter
 import com.pdfpaper.engine.speech.SpeechPage
 import com.pdfpaper.engine.speech.SpeechParagraph
 import com.pdfpaper.engine.speech.SpeechWord
@@ -61,6 +63,13 @@ class ReadAloudSessionTest {
             spoken += text
         }
 
+        var voiceChanges = 0
+
+        override fun setVoice(key: SpeechVoiceKey?): Boolean {
+            voiceChanges++
+            return true
+        }
+
         override fun stop() {
             stops++
         }
@@ -72,7 +81,8 @@ class ReadAloudSessionTest {
 
     /** A page source that serves the pages it was given. */
     private class FakePages(
-        private val pages: Map<Int, SpeechPage>
+        private val pages: Map<Int, SpeechPage>,
+        private val chapters: SpeechChapterList = SpeechChapterList(emptyList(), null)
     ) : SpeechPageSource {
         val requested = mutableListOf<Int>()
 
@@ -81,8 +91,7 @@ class ReadAloudSessionTest {
             return pages[index]
         }
 
-        override suspend fun chapters(): SpeechChapterList =
-            SpeechChapterList(emptyList(), null)
+        override suspend fun chapters(): SpeechChapterList = chapters
 
         override fun pageCount(): Int = pages.size
     }
@@ -215,6 +224,47 @@ class ReadAloudSessionTest {
         session.onFocusEvent(FocusEvent.GAIN)
         assertFalse(session.state.value.speaking)
         assertEquals(1, synthesis.spoken.size)
+    }
+
+    @Test
+    fun theChapterListTravelsToTheSheet() = runBlocking {
+        val chapter = SpeechChapter("Chapter One", 0, 0, 0.0, ChapterSource.OUTLINE)
+        val pages = FakePages(
+            mapOf(0 to page(0), 1 to page(1)),
+            SpeechChapterList(listOf(chapter), ChapterSource.OUTLINE)
+        )
+        val session = session(pages = pages)
+
+        session.start("Doc", SpeechPosition())
+
+        assertEquals(listOf(chapter), session.state.value.chapters)
+        assertEquals(ChapterSource.OUTLINE, session.state.value.chapterSource)
+    }
+
+    @Test
+    fun aSleepCountdownPausesTheReadingWhenItRunsOut() = runBlocking {
+        val session = session()
+        session.start("Doc", SpeechPosition())
+
+        session.setSleep(SleepOption.MINUTES_15, now = 1_000L)
+        session.tick(now = 1_000L + 15 * 60_000L)
+
+        assertFalse(session.state.value.speaking)
+        assertEquals(SleepOption.MINUTES_15, session.state.value.sleep)
+        assertTrue(session.state.value.message?.contains("Sleep") == true)
+    }
+
+    @Test
+    fun changingTheVoiceReplaysTheParagraph() = runBlocking {
+        val synthesis = FakeSynthesis()
+        val session = session(synthesis)
+        session.start("Doc", SpeechPosition())
+
+        val changed = session.setVoice(SpeechVoiceKey("engine", "en-GB", "voice"))
+
+        assertTrue(changed)
+        assertEquals(1, synthesis.voiceChanges)
+        assertEquals(listOf("Paragraph 0", "Paragraph 0"), synthesis.spoken)
     }
 
     @Test

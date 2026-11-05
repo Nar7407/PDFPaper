@@ -33,6 +33,16 @@ val DEFAULT_REGEX_FLAGS: Set<RegexFlag> =
 const val LIBRARY_MAX_MATCHES = 5000
 const val LIBRARY_RUN_TIME_MS = 30_000L
 
+/** The document budget the spec pins: one page at a time, one run at a time. */
+const val DOCUMENT_MAX_MATCHES = 2000
+const val DOCUMENT_PAGE_TIME_MS = 1_500L
+const val DOCUMENT_RUN_TIME_MS = 60_000L
+const val DOCUMENT_CONTEXT_RADIUS = 48
+
+/** The tester's one-page budget: instant feedback, never a slow panel. */
+const val TESTER_MAX_MATCHES = 50
+const val TESTER_TIME_MS = 300L
+
 /**
  * One result row. [fileId] is 0 and [documentUri] is empty in document scope,
  * because there is exactly one document; [ordinal] is the match's position on
@@ -111,7 +121,8 @@ data class RegexUiState(
     val summary: String
         get() = describeRegexSummary(
             matchCount = rows.size,
-            pageCount = rows.map { it.pageIndex }.distinct().size,
+            // A page is a (file, page) pair: page 1 of ten files is ten pages.
+            pageCount = rows.map { it.fileId to it.pageIndex }.distinct().size,
             fileCount = if (scope == RegexScope.LIBRARY) rows.map { it.fileId }.distinct().size else null,
             truncated = truncated,
             timedOut = timedOut,
@@ -141,6 +152,19 @@ fun libraryOptions(
     runTimeMs: Long = LIBRARY_RUN_TIME_MS
 ): RegexOptions = regexOptions(flags, maxMatches, runTimeMs)
 
+/**
+ * The open document's budget: 2000 matches, a 1.5 s deadline per page, 60 s for
+ * the whole run and 48 characters of context — the numbers the spec pins, so
+ * the viewer, the CLI and the panel cannot drift.
+ */
+fun documentOptions(flags: Set<RegexFlag>): RegexOptions = RegexOptions(
+    flags = flags,
+    maxMatches = DOCUMENT_MAX_MATCHES,
+    timeLimitMs = DOCUMENT_PAGE_TIME_MS,
+    runTimeLimitMs = DOCUMENT_RUN_TIME_MS,
+    contextRadius = DOCUMENT_CONTEXT_RADIUS
+)
+
 // ---------------------------------------------------------------------- rows
 
 /**
@@ -164,6 +188,37 @@ fun rowsForPage(
             documentUri = uri,
             displayName = displayName,
             pageIndex = pageIndex,
+            ordinal = match.ordinal,
+            text = match.text,
+            before = match.before,
+            after = match.after,
+            rects = match.rects
+        )
+    }
+}
+
+/**
+ * One run's outcome in reading order. Unlike [rowsForPage], which stamps one
+ * page index on every row, a document run's result carries matches from many
+ * pages, so each row keeps its own [RegexMatch.pageIndex] — next/previous and
+ * the highlight boxes depend on it.
+ */
+fun rowsForResult(
+    scope: RegexScope,
+    fileId: Long,
+    documentUri: String,
+    displayName: String,
+    result: RegexResult
+): List<RegexRow> {
+    val matches = (result as? RegexResult.Matches)?.matches ?: return emptyList()
+    val id = if (scope == RegexScope.DOCUMENT) 0L else fileId
+    val uri = if (scope == RegexScope.DOCUMENT) "" else documentUri
+    return matches.map { match ->
+        RegexRow(
+            fileId = id,
+            documentUri = uri,
+            displayName = displayName,
+            pageIndex = match.pageIndex,
             ordinal = match.ordinal,
             text = match.text,
             before = match.before,
@@ -243,6 +298,21 @@ fun uniqueRows(rows: List<RegexRow>): List<RegexRow> {
 /** The match with this occurrence ordinal on its page, or null. */
 fun rowForOrdinal(result: RegexResult, ordinal: Int): RegexMatch? =
     (result as? RegexResult.Matches)?.matches?.firstOrNull { it.ordinal == ordinal }
+
+/**
+ * The next active row, wrapping at both ends. `-1` means "nothing selected
+ * yet": stepping forward starts at the first row and backward at the last, so
+ * a fresh run never appears to skip a match. An empty list stays at `-1`.
+ */
+fun stepRegexIndex(current: Int, size: Int, delta: Int): Int {
+    if (size <= 0) return -1
+    val base = if (current < 0) {
+        if (delta >= 0) -1 else 0
+    } else {
+        current
+    }
+    return ((base + delta) % size + size) % size
+}
 
 // ------------------------------------------------------------------- exports
 

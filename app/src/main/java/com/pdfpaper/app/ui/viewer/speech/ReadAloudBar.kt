@@ -11,6 +11,7 @@ import androidx.compose.material.icons.outlined.Pause
 import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.SkipNext
 import androidx.compose.material.icons.outlined.SkipPrevious
+import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -40,7 +41,10 @@ import com.pdfpaper.engine.text.TextRect
  * its controls but a stopped one does not leave a dead strip on the page.
  */
 @Composable
-fun ReadAloudBar(modifier: Modifier = Modifier) {
+fun ReadAloudBar(
+    modifier: Modifier = Modifier,
+    onOpenOptions: () -> Unit = {}
+) {
     val state by ReadAloudHub.state.collectAsState()
     if (!state.active) return
     val commands = ReadAloudHub.commands
@@ -93,6 +97,12 @@ fun ReadAloudBar(modifier: Modifier = Modifier) {
                 modifier = Modifier.testTag(UiTags.VIEWER_READ_ALOUD_NEXT)
             ) {
                 Icon(Icons.Outlined.SkipNext, contentDescription = "Next paragraph")
+            }
+            IconButton(
+                onClick = onOpenOptions,
+                modifier = Modifier.testTag(UiTags.VIEWER_READ_ALOUD_OPTIONS)
+            ) {
+                Icon(Icons.Outlined.Tune, contentDescription = "Reading options")
             }
             IconButton(
                 onClick = { commands?.stop() },

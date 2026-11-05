@@ -15,8 +15,10 @@ import android.speech.tts.UtteranceProgressListener
 class AndroidSpeechSynthesis(
     context: Context,
     private val listener: SpeechListener,
-    private val voice: SpeechVoiceKey? = null
+    initialVoice: SpeechVoiceKey? = null
 ) : SpeechSynthesis {
+
+    private var voice: SpeechVoiceKey? = initialVoice
 
     private val appContext = context.applicationContext
 
@@ -89,6 +91,26 @@ class AndroidSpeechSynthesis(
         }
         tts.voice = platform
         return null
+    }
+
+    /**
+     * Switches the live engine to another installed voice. A key the device no
+     * longer has leaves the current voice alone and returns false.
+     */
+    override fun setVoice(key: SpeechVoiceKey?): Boolean {
+        val tts = engine ?: return false
+        if (!ready) return false
+        if (key == null) {
+            voice = null
+            tts.voice = tts.defaultVoice
+            return true
+        }
+        val platform = tts.voices.orEmpty().firstOrNull {
+            it.name == key.name && it.locale?.toLanguageTag() == key.locale
+        } ?: return false
+        tts.voice = platform
+        voice = key
+        return true
     }
 
     override fun speak(text: String, utteranceId: String, rate: Float) {

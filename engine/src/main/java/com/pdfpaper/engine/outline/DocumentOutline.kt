@@ -25,6 +25,17 @@ data class OutlineEntry(
 )
 
 /**
+ * One outline item as found by [DocumentOutline.diagnose] (T66). [pageIndex]
+ * is null when the entry's destination cannot be resolved to a page of this
+ * document, which [DocumentOutline.read] silently skips.
+ */
+data class OutlineDiagnostic(
+    val title: String,
+    val pageIndex: Int?,
+    val depth: Int
+)
+
+/**
  * Reads the document outline for the reader's chapter list (T34). The outline
  * is authoritative when it exists; an entry whose destination cannot be
  * resolved to a page of this document is skipped, so a file saved by another
@@ -67,6 +78,45 @@ object DocumentOutline {
                         depth = depth
                     )
                 }
+                if (depth + 1 < maxDepth) visit(item["First"], depth + 1)
+                current = item["Next"]
+            }
+        }
+
+        visit(outlines["First"], 0)
+        return out
+    }
+
+    /**
+     * Every outline item, in outline order, including the ones [read] would
+     * skip because their destination is missing (T66). The splitter needs to
+     * say *why* a chapter was left out; the reader's resolved list stays as
+     * it is.
+     */
+    fun diagnose(document: PdfDocument, maxDepth: Int = 12): List<OutlineDiagnostic> {
+        val pages = documentPages(document)
+        if (pages.isEmpty()) return emptyList()
+        val catalog = document.resolveRoot() as? PdfDict ?: return emptyList()
+        val outlines = resolve(document, catalog["Outlines"]) as? PdfDict ?: return emptyList()
+        val resolver = DestinationResolver(document, pages)
+        val out = ArrayList<OutlineDiagnostic>()
+        val visited = HashSet<Int>()
+        var budget = MAX_ITEMS
+
+        fun visit(first: PdfObject?, depth: Int) {
+            var current = first
+            while (current != null && budget-- > 0) {
+                val ref = current as? PdfRef
+                if (ref != null && !visited.add(ref.objNum)) return
+                val item = resolve(document, current) as? PdfDict ?: return
+                val title = titleOf(document, item)?.take(160).orEmpty()
+                val action = resolve(document, item["A"]) as? PdfDict
+                val destination = resolver.resolve(item["Dest"] ?: action?.get("D"))
+                out += OutlineDiagnostic(
+                    title = title,
+                    pageIndex = destination?.pageIndex?.takeIf { it in pages.indices },
+                    depth = depth
+                )
                 if (depth + 1 < maxDepth) visit(item["First"], depth + 1)
                 current = item["Next"]
             }

@@ -1,5 +1,6 @@
 package com.pdfpaper.app.ui.recent
 
+import android.widget.Toast
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -19,7 +20,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.filled.List
+import androidx.compose.material.icons.automirrored.outlined.AddToHomeScreen
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -30,6 +33,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
@@ -39,6 +43,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.pdfpaper.app.data.RecentCodec
 import com.pdfpaper.app.data.RecentFile
+import com.pdfpaper.app.launcher.LauncherSurfaces
 import com.pdfpaper.app.ui.UiTags
 import com.pdfpaper.app.ui.theme.PDFPaperTheme
 
@@ -48,6 +53,7 @@ fun RecentScreen(
     viewModel: RecentViewModel = viewModel()
 ) {
     val state by viewModel.state.collectAsState()
+    val context = LocalContext.current
 
     LaunchedEffect(Unit) { viewModel.refresh() }
     LaunchedEffect(state.pendingOpen) {
@@ -60,6 +66,18 @@ fun RecentScreen(
     RecentContent(
         state = state,
         onOpen = viewModel::open,
+        onPin = { recent ->
+            val requested = LauncherSurfaces.requestPin(context, recent)
+            Toast.makeText(
+                context,
+                if (requested) {
+                    "Confirm the shortcut on your home screen."
+                } else {
+                    "This launcher does not support pinned shortcuts."
+                },
+                Toast.LENGTH_SHORT
+            ).show()
+        },
         onClear = viewModel::clear
     )
 }
@@ -68,6 +86,7 @@ fun RecentScreen(
 private fun RecentContent(
     state: RecentUiState,
     onOpen: (RecentFile) -> Unit,
+    onPin: (RecentFile) -> Unit = {},
     onClear: () -> Unit
 ) {
     Surface(
@@ -112,7 +131,11 @@ private fun RecentContent(
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         items(state.items, key = { it.uri }) { recent ->
-                            RecentRow(recent = recent, onClick = { onOpen(recent) })
+                            RecentRow(
+                                recent = recent,
+                                onClick = { onOpen(recent) },
+                                onPin = { onPin(recent) }
+                            )
                         }
                     }
                 }
@@ -122,7 +145,7 @@ private fun RecentContent(
 }
 
 @Composable
-private fun RecentRow(recent: RecentFile, onClick: () -> Unit) {
+private fun RecentRow(recent: RecentFile, onClick: () -> Unit, onPin: () -> Unit) {
     Surface(
         shape = RoundedCornerShape(12.dp),
         color = MaterialTheme.colorScheme.surface,
@@ -155,12 +178,21 @@ private fun RecentRow(recent: RecentFile, onClick: () -> Unit) {
                     overflow = TextOverflow.Ellipsis
                 )
                 Text(
-                    text = "${recent.kindLabel} - ${recent.uri}",
+                    text = recent.progressLabel
+                        ?.let { "${recent.kindLabel} - $it" }
+                        ?: "${recent.kindLabel} - ${recent.uri}",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.padding(top = 2.dp)
+                    modifier = Modifier.padding(top = 2.dp).testTag(UiTags.RECENT_PROGRESS)
+                )
+            }
+            IconButton(onClick = onPin) {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Outlined.AddToHomeScreen,
+                    contentDescription = "Add to home screen",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
             Icon(
@@ -214,7 +246,12 @@ private fun RecentScreenLightPreview() {
         RecentContent(
             state = RecentUiState(
                 items = listOf(
-                    RecentFile("content://demo/report.pdf", "Quarterly report.pdf"),
+                    RecentFile(
+                        "content://demo/report.pdf",
+                        "Quarterly report.pdf",
+                        page = 47,
+                        pageCount = 210
+                    ),
                     RecentFile(
                         "content://demo/notes.docx",
                         "Meeting notes.docx",

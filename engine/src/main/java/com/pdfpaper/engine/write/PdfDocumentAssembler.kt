@@ -10,6 +10,7 @@ import com.pdfpaper.engine.edit.PageEditApplier
 import com.pdfpaper.engine.edit.TextEditReport
 import com.pdfpaper.engine.form.FormFiller
 import com.pdfpaper.engine.geom.PdfRect
+import com.pdfpaper.engine.links.DestinationResolver
 import com.pdfpaper.engine.model.PdfArray
 import com.pdfpaper.engine.model.PdfDict
 import com.pdfpaper.engine.model.PdfDocument
@@ -59,10 +60,14 @@ data class PdfPageSelection(
  *
  * What is not preserved (documented, by design for T10):
  * - encrypted documents are rejected (T13),
- * - the structure tree, /PageLabels, /StructTreeRoot, embedded files and
- *   other /Names sub-trees, /PieceInfo, article threads and signatures,
+ * - the structure tree, `/StructTreeRoot`, embedded files and
+ *   other /Names sub-trees, `/PieceInfo`, article threads and signatures,
  * - cross-reference streams and object streams: the output always uses a
  *   classic cross-reference table and plain objects.
+ *
+ * T66 adds an opt-in `/PageLabels` rebuild ([rebasePageLabels]) and a callback
+ * for internal links dropped because their target page is in another output
+ * ([onDroppedInternalLink]); the defaults keep the T10 behaviour.
  */
 internal class PdfDocumentAssembler(
     private val selections: List<PdfPageSelection>,
@@ -127,7 +132,14 @@ internal class PdfDocumentAssembler(
      * it can refer to objects the page hooks created and can change the
      * catalogue the assembler has built so far.
      */
-    private val catalogExtras: ((PdfDocumentBuilder, LinkedHashMap<PdfName, PdfObject>) -> Unit)? = null
+    private val catalogExtras: ((PdfDocumentBuilder, LinkedHashMap<PdfName, PdfObject>) -> Unit)? = null,
+    /** T66: keep /PageLabels, rebased onto the selected output pages. */
+    private val rebasePageLabels: Boolean = false,
+    /**
+     * T66: called with the zero-based source and target page of an internal
+     * link that was dropped because its target page is in another output.
+     */
+    private val onDroppedInternalLink: ((sourcePage: Int, targetPage: Int) -> Unit)? = null
 ) {
 
     private val builder = PdfDocumentBuilder(version)
@@ -144,6 +156,24 @@ internal class PdfDocumentAssembler(
             .mapValues { (_, list) -> list.associateBy { it.objNum } }
     private val annotationWriter: AnnotationWriter by lazy { AnnotationWriter(builder) }
     private val annotationTransformer: AnnotationTransformer by lazy { AnnotationTransformer(builder) }
+
+    /** Source-side destination resolvers, one per document (T66). */
+    private val sourceDestinations = HashMap<PdfDocument, DestinationResolver>()
+
+    /** The source page index a link annotation points at, before copying (T66). */
+    private fun sourceLinkTarget(document: PdfDocument, annot: PdfObject): Int? {
+        val dict = copierFor(document).resolve(annot) as? PdfDict ?: return null
+        val pages = pagesByDoc.getOrPut(document) { document.pages() }
+        val resolver = sourceDestinations.getOrPut(document) { DestinationResolver(document, pages) }
+        val action = dict["A"]?.let { copierFor(document).resolve(it) } as? PdfDict
+        val destination = dict["Dest"]
+        if (destination != null) {
+            val target = resolver.resolve(destination)?.pageIndex
+            if (target != null) return target
+        }
+        val actionDestination = action?.get("D")
+        return if (actionDestination == null) null else resolver.resolve(actionDestination)?.pageIndex
+    }
 
     /** Shared OCR text font for T25 edits; created on the first invisible word. */
     private val ocrFont: Lazy<OcrTextFont> = lazy { OcrTextFont(builder) }
@@ -264,7 +294,9 @@ internal class PdfDocumentAssembler(
         }
 
         val placements = if (doc === primary) placementsByPage[selection.pageIndex].orEmpty() else emptyMap()
-        val existingAnnots = src["Annots"]?.let { copyAnnots(copier, it, doc === primary, placements) }
+        val existingAnnots = src["Annots"]?.let {
+            copyAnnots(copier, it, doc, selection.pageIndex, doc === primary, placements)
+        }
         val extras = if (doc === primary) additionsByPage[selection.pageIndex] else null
         val pageBox = PdfRect.of(page.cropBox)
         val added = extras?.flatMap {
@@ -311,6 +343,8 @@ internal class PdfDocumentAssembler(
     private fun copyAnnots(
         copier: PdfObjectCopier,
         annotsObj: PdfObject,
+        document: PdfDocument,
+        sourcePage: Int,
         drops: Boolean,
         placements: Map<Int, AnnotationPlacement>
     ): PdfArray? {
@@ -320,12 +354,16 @@ internal class PdfDocumentAssembler(
         for (item in array.items) {
             val sourceNum = (item as? PdfRef)?.objNum
             if (drops && sourceNum != null && sourceNum in droppedAnnots) continue
+            val subtype = annotSubtype(copier, item)
+            // Resolve a link's target before copying: copying maps a dropped
+            // page to nothing, which would erase the evidence of why it went.
+            val linkTarget = if (subtype == "Link") sourceLinkTarget(document, item) else null
             // A widget's /Parent would otherwise drag the whole AcroForm tree in
             // from here; the form is imported explicitly later and reuses these
             // same objects through the copier's memo. Every other annotation
             // keeps /Parent: a popup's /Parent is its markup annotation
             // (§12.5.6.14).
-            val skip = if (annotSubtype(copier, item) == "Widget") setOf("Parent") else emptySet()
+            val skip = if (subtype == "Widget") setOf("Parent") else emptySet()
             var copied: PdfObject? = when (item) {
                 is PdfRef -> copier.copyIndirect(item.objNum, skip)
                 else -> copier.copyValue(item, skip)
@@ -334,7 +372,12 @@ internal class PdfDocumentAssembler(
             if (copied != null && placement != null) {
                 copied = annotationTransformer.place(copied, placement)
             }
-            if (copied != null && keepAnnot(copied)) out += copied
+            if (copied != null && keepAnnot(copied)) {
+                out += copied
+            } else if (subtype == "Link" && linkTarget != null) {
+                val selected = firstRefByDoc[document]?.containsKey(linkTarget) == true
+                if (!selected) onDroppedInternalLink?.invoke(sourcePage, linkTarget)
+            }
         }
         return if (out.isEmpty()) null else PdfArray(out)
     }
@@ -666,6 +709,7 @@ internal class PdfDocumentAssembler(
                 }
             }
             if (preserveOutlines) importOutlines(primaryRoot)?.let { catalog[PdfName("Outlines")] = it }
+            if (rebasePageLabels) importPageLabels()?.let { catalog[PdfName("PageLabels")] = it }
             if (preserveNamedDestinations || preserveEmbeddedFiles || preserveJavaScriptNames) {
                 importNames()?.let { catalog[PdfName("Names")] = it }
             }
@@ -685,6 +729,73 @@ internal class PdfDocumentAssembler(
         }
         catalogExtras?.invoke(builder, catalog)
         return builder.add(PdfDict(catalog))
+    }
+
+    // -- Page labels (T66) ----------------------------------------------------
+
+    /**
+     * Rebuilds the source `/PageLabels` number tree (§12.4.2) for the selected
+     * pages. A source rule keeps its `/S` and `/P`; `/St` moves with the first
+     * selected page of that rule, so a part that starts in the middle of a
+     * decimal run still numbers its first page correctly.
+     */
+    private fun importPageLabels(): PdfRef? {
+        val copier = copierFor(primary)
+        val catalog = primary.resolveRoot() as? PdfDict ?: return null
+        val root = copier.resolve(catalog["PageLabels"] ?: return null) as? PdfDict ?: return null
+        val rules = java.util.TreeMap<Int, PdfDict>()
+        flattenLabelTree(copier, root, rules, 0)
+        if (rules.isEmpty()) return null
+
+        val nums = ArrayList<PdfObject>()
+        var previousKey: Int? = null
+        var outputIndex = 0
+        for (selection in selections) {
+            if (selection.document === primary) {
+                val applied = rules.floorEntry(selection.pageIndex)
+                if (applied != null && applied.key != previousKey) {
+                    nums += PdfInteger(outputIndex.toLong())
+                    nums += rebasedLabel(copier, applied.value, selection.pageIndex - applied.key)
+                    previousKey = applied.key
+                }
+            }
+            outputIndex++
+        }
+        if (nums.isEmpty()) return null
+        return builder.add(PdfDict(mapOf(PdfName("Nums") to PdfArray(nums))))
+    }
+
+    private fun flattenLabelTree(
+        copier: PdfObjectCopier,
+        node: PdfDict,
+        out: MutableMap<Int, PdfDict>,
+        depth: Int
+    ) {
+        if (depth > 16) return
+        node["Nums"]?.let { raw -> (copier.resolve(raw) as? PdfArray)?.let { nums ->
+            var i = 0
+            while (i + 1 < nums.items.size) {
+                val key = (copier.resolve(nums.items[i]) as? PdfInteger)?.value?.toInt()
+                val value = copier.resolve(nums.items[i + 1]) as? PdfDict
+                if (key != null && key >= 0 && value != null) out.putIfAbsent(key, value)
+                i += 2
+            }
+        } }
+        node["Kids"]?.let { raw -> (copier.resolve(raw) as? PdfArray)?.items?.forEach { kid ->
+            (copier.resolve(kid) as? PdfDict)?.let { flattenLabelTree(copier, it, out, depth + 1) }
+        } }
+    }
+
+    private fun rebasedLabel(copier: PdfObjectCopier, rule: PdfDict, offset: Int): PdfDict {
+        val entries = LinkedHashMap<PdfName, PdfObject>()
+        for (key in listOf("S", "P")) {
+            rule[key]?.let { value -> copier.copyValue(value)?.let { entries[PdfName(key)] = it } }
+        }
+        val start = (rule["St"] as? PdfInteger)?.value ?: 1L
+        val rebased = start + offset
+        // /St defaults to 1 (§12.4.2, Table 159); writing it back would be noise.
+        if (rebased != 1L) entries[PdfName("St")] = PdfInteger(rebased)
+        return PdfDict(entries)
     }
 
     private fun copyInfo() {

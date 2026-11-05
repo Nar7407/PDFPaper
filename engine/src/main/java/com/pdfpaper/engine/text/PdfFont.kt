@@ -2,6 +2,8 @@ package com.pdfpaper.engine.text
 
 import com.pdfpaper.engine.filter.decoded
 import com.pdfpaper.engine.model.PdfArray
+import com.pdfpaper.engine.edit.Standard14
+import com.pdfpaper.engine.edit.StandardFont
 import com.pdfpaper.engine.model.PdfDict
 import com.pdfpaper.engine.model.PdfDocument
 import com.pdfpaper.engine.model.PdfInteger
@@ -18,7 +20,8 @@ import com.pdfpaper.engine.model.PdfStream
  * text extractor uses to position runs.
  *
  * Tolerances (never throw for unknown fonts):
- *  - missing /Widths → 0 advance (standard-14 AFM tables are a T14 candidate),
+ *  - missing /Widths on a standard-14 font → its built-in AFM advances
+ *    (§9.6.2.2, Appendix D); on any other font → 0 advance,
  *  - missing /Encoding → StandardEncoding (Type1-ish) or WinAnsi (TrueType),
  *  - unsupported /Encoding on a Type0 font → per-CID replacement mapping,
  *  - missing /ToUnicode → Identity-H/V codes read as Unicode (best effort).
@@ -396,10 +399,23 @@ object FontResolver {
                 widths[(firstChar + i).toInt() and 0xFF] = value.toLong()
             }
         } else {
-            // Word/LibreOffice commonly store /Widths as an indirect array;
-            // resolving it is the difference between real advances and a
-            // whole page of zero-width text.
-            reasons += if (widthsRaw == null) "missing /Widths" else "invalid /Widths"
+            // A standard-14 font may omit /Widths entirely: its advances are the
+            // font's built-in AFM metrics (§9.6.2.2, Appendix D). Using them is
+            // what gives real text bounds for PDFs written by many producers.
+            val standard = baseFontName
+                ?.substringAfter('+')
+                ?.let { StandardFont.byName(it) }
+                ?.takeIf { it.winAnsi }
+            if (standard != null && widthsRaw == null) {
+                for (code in 0..255) {
+                    widths[code] = Standard14.width1000(standard, code).toLong()
+                }
+            } else {
+                // Word/LibreOffice commonly store /Widths as an indirect array;
+                // resolving it is the difference between real advances and a
+                // whole page of zero-width text.
+                reasons += if (widthsRaw == null) "missing /Widths" else "invalid /Widths"
+            }
         }
 
         val diagnostics = FontDiagnostics(

@@ -88,6 +88,19 @@ object RegexSearch {
         null
     }
 
+    // Translate a possible JVM-side translate failure into the same result the
+    // matcher already carries, so the CLI and both app scopes can expose the
+    // pattern as invalid instead of letting the failure escape.
+    private fun handleCompileFailure(pattern: String, cause: Throwable): RegexResult.InvalidPattern {
+        return RegexResult.InvalidPattern(
+            pattern = pattern,
+            error = RegexPatternError(
+                message = cause.message ?: TOO_COMPLEX,
+                position = -1
+            )
+        )
+    }
+
     /**
      * The JDK reports a pattern too deeply nested to compile as a
      * [PatternSyntaxException] whose description is "Stack overflow during

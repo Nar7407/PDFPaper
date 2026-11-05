@@ -21,7 +21,9 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.outlined.AddBox
+import androidx.compose.material.icons.outlined.AutoStories
 import androidx.compose.material.icons.outlined.DocumentScanner
+import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -30,18 +32,29 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.pdfpaper.app.data.LastReading
+import com.pdfpaper.app.data.ReadingStateStore
+import com.pdfpaper.app.data.readingProgressLabel
 import com.pdfpaper.app.ui.UiTags
 import com.pdfpaper.app.ui.theme.PDFPaperTheme
 import com.pdfpaper.app.ui.tools.ToolDefinition
@@ -54,16 +67,36 @@ fun HomeScreen(
     onBrowseTools: () -> Unit,
     onBrowseRecent: () -> Unit,
     onOpenTool: (ToolDefinition) -> Unit,
+    onSearchLibrary: () -> Unit = {},
+    /** Task T38b: reopen the last document where the reader stopped. */
+    onContinueReading: (LastReading) -> Unit = {},
     viewModel: HomeViewModel = viewModel()
 ) {
     val state by viewModel.state.collectAsState()
+    // The last session is app data, read on every resume so the card is right
+    // after coming back from the viewer.
+    val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+    var lastReading by remember { mutableStateOf(ReadingStateStore(context).lastDocument()) }
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                lastReading = ReadingStateStore(context).lastDocument()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
     HomeContent(
         state = state,
+        lastReading = lastReading,
         onOpen = onOpen,
         onNewPdf = onNewPdf,
         onBrowseTools = onBrowseTools,
         onBrowseRecent = onBrowseRecent,
         onOpenTool = onOpenTool,
+        onSearchLibrary = onSearchLibrary,
+        onContinueReading = onContinueReading,
         onDismissMessages = viewModel::clearMessages
     )
 }
@@ -76,7 +109,10 @@ private fun HomeContent(
     onBrowseTools: () -> Unit,
     onBrowseRecent: () -> Unit,
     onOpenTool: (ToolDefinition) -> Unit,
-    onDismissMessages: () -> Unit
+    onSearchLibrary: () -> Unit,
+    onDismissMessages: () -> Unit,
+    lastReading: LastReading? = null,
+    onContinueReading: (LastReading) -> Unit = {}
 ) {
     Surface(
         color = MaterialTheme.colorScheme.background,
@@ -102,6 +138,54 @@ private fun HomeContent(
 
             Spacer(Modifier.height(24.dp))
             OpenDocumentCard(onOpen = onOpen)
+
+            // Task T38b: the one-tap way back into the last document. It shows
+            // the page the reader stopped on, so "Continue reading" means the
+            // same page, not just the same file.
+            lastReading?.let { last ->
+                Spacer(Modifier.height(12.dp))
+                ContinueReadingCard(
+                    title = last.displayName ?: "Your last document",
+                    progress = readingProgressLabel(
+                        last.state.pageIndex,
+                        last.state.pageCount
+                    ),
+                    onClick = { onContinueReading(last) }
+                )
+            }
+
+            Spacer(Modifier.height(12.dp))
+            OutlinedCard(
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(onClick = onSearchLibrary)
+                    .testTag(UiTags.HOME_SEARCH_LIBRARY)
+            ) {
+                Row(
+                    modifier = Modifier.padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        Icons.Outlined.Search,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                    Column(Modifier.weight(1f).padding(start = 12.dp)) {
+                        Text("Search your library", style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            "Full-text search across the folders you index on this device.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Icon(
+                        Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
 
             Spacer(Modifier.height(12.dp))
             Row(
@@ -210,6 +294,67 @@ private fun HomeContent(
                 MessageCard(text = message, onDismiss = onDismissMessages)
             }
             Spacer(Modifier.height(24.dp))
+        }
+    }
+}
+
+@Composable
+private fun ContinueReadingCard(
+    title: String,
+    progress: String?,
+    onClick: () -> Unit
+) {
+    OutlinedCard(
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary),
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag(UiTags.HOME_CONTINUE)
+            .clickable(role = Role.Button, onClick = onClick)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Surface(
+                shape = RoundedCornerShape(9.dp),
+                color = MaterialTheme.colorScheme.primaryContainer,
+                modifier = Modifier.size(44.dp)
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        imageVector = Icons.Outlined.AutoStories,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onPrimaryContainer
+                    )
+                }
+            }
+            Column(modifier = Modifier.weight(1f).padding(horizontal = 14.dp)) {
+                Text(
+                    text = "Continue reading",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Medium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                if (progress != null) {
+                    Text(
+                        text = progress,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+            Icon(
+                imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
     }
 }
@@ -378,11 +523,18 @@ private fun HomeScreenLightPreview() {
     PDFPaperTheme(darkTheme = false) {
         HomeContent(
             state = HomeUiState(),
+            lastReading = LastReading(
+                origin = "content://demo/report.pdf",
+                displayName = "Quarterly report.pdf",
+                state = com.pdfpaper.app.data.ReadingState(pageIndex = 47, pageCount = 210)
+            ),
             onOpen = {},
             onNewPdf = {},
             onBrowseTools = {},
             onBrowseRecent = {},
             onOpenTool = {},
+            onSearchLibrary = {},
+            onContinueReading = {},
             onDismissMessages = {}
         )
     }

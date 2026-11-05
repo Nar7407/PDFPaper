@@ -69,6 +69,20 @@ class PdfFile private constructor(
     /** Number of entries in the merged cross-reference table. */
     val objectCount: Int get() = entries.size
 
+    /** Total bytes in the source; used by structure checks (T49). */
+    val sourceSize: Long get() = source.size
+
+    /**
+     * Reads raw source bytes for structure-level checks (T49). This is the
+     * same tolerant read path the parser uses; a short or failed read returns
+     * the bytes that were available.
+     */
+    fun readRaw(offset: Long, length: Int): ByteArray {
+        if (offset < 0 || length <= 0 || offset >= source.size) return ByteArray(0)
+        val safeLength = minOf(length.toLong(), source.size - offset).toInt()
+        return source.read(offset, safeLength)
+    }
+
     fun entry(objNum: Int): XRefEntry? = entries[objNum]
 
     /**

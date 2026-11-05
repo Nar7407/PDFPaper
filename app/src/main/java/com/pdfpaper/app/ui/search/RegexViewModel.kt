@@ -78,6 +78,15 @@ class RegexViewModel(application: Application) : AndroidViewModel(application) {
         if (pattern.isEmpty()) return
         val flags = _state.value.flags
         runPattern = pattern
+        // A malformed pattern must report itself even when the index holds no
+        // pages to compile against: the per-page loop below would never run.
+        val probe = RegexSearch.find(pattern, "", libraryOptions(flags))
+        if (probe is RegexResult.InvalidPattern) {
+            _state.update {
+                it.copy(running = false, rows = emptyList(), error = probe.error, filesTotal = 0)
+            }
+            return
+        }
         runJob?.cancel()
         _state.update {
             it.copy(
@@ -181,7 +190,13 @@ class RegexViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun cancel() {
-        runJob?.cancel()
+        val job = runJob ?: return
+        // A job cancelled before its body starts never reaches the finally
+        // block, so the panel must be told here as well (T65 device test).
+        if (job.isActive) {
+            _state.update { it.copy(running = false, cancelled = true, progress = null) }
+        }
+        job.cancel()
     }
 
     fun clearResults() {

@@ -8,6 +8,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.GridView
 import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Home
+import androidx.compose.material.icons.outlined.Note
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
@@ -61,6 +62,13 @@ fun AppBottomBar(
                 selected = currentRoute == Routes.RECENT,
                 icon = { Icon(Icons.Outlined.History, contentDescription = null) },
                 onClick = { onNavigate(Routes.RECENT) }
+            )
+            BottomDestination(
+                label = "Annotations",
+                tag = UiTags.NAV_ANNOTATIONS,
+                selected = currentRoute == Routes.ANNOTATIONS,
+                icon = { Icon(Icons.Outlined.Note, contentDescription = null) },
+                onClick = { onNavigate(Routes.ANNOTATIONS) }
             )
         }
     }

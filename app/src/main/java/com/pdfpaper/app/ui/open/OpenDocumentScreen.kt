@@ -22,9 +22,9 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.pdfpaper.app.data.DocumentLocation
 import com.pdfpaper.app.ui.UiTags
 import com.pdfpaper.app.ui.components.AppTopBar
-import java.io.File
 
 /**
  * The progress screen of the open flow: it copies the picked document, decides
@@ -37,13 +37,13 @@ fun OpenDocumentScreen(
     uri: String,
     fallbackName: String?,
     onBack: () -> Unit,
-    onOpened: (File) -> Unit,
+    onOpened: (DocumentLocation, String?) -> Unit,
     viewModel: OpenDocumentViewModel = viewModel()
 ) {
     val state by viewModel.state.collectAsState()
 
     LaunchedEffect(uri, fallbackName) { viewModel.open(Uri.parse(uri), fallbackName) }
-    LaunchedEffect(state.pdf) { state.pdf?.let(onOpened) }
+    LaunchedEffect(state.location) { state.location?.let { onOpened(it, state.origin) } }
 
     Surface(
         color = MaterialTheme.colorScheme.background,

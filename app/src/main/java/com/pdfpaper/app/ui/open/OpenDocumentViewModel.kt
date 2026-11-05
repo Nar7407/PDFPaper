@@ -4,9 +4,11 @@ import android.app.Application
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.pdfpaper.app.data.DocumentAccess
+import com.pdfpaper.app.data.DocumentLocation
+import com.pdfpaper.app.data.IncomingKind
 import com.pdfpaper.app.data.RecentFile
 import com.pdfpaper.app.data.RecentStore
-import com.pdfpaper.app.data.cacheDocumentFromUri
 import com.pdfpaper.app.data.rememberUriPermission
 import com.pdfpaper.app.office.DocumentKind
 import com.pdfpaper.app.office.OfficeCache
@@ -23,16 +25,29 @@ import kotlinx.coroutines.withContext
 import java.io.File
 
 /**
- * Progress of one document being opened: copy from the provider, detect what
- * it really is, convert office files to PDF, then hand the viewer a file.
+ * Progress of one document being opened: inspect the provider's bytes, detect
+ * what the file really is, convert office files to PDF, then hand the viewer
+ * either a local path or a seekable content URI (task T47).
  */
 data class OpenDocumentState(
     val name: String? = null,
     val stage: String = "Opening...",
     val error: String? = null,
-    /** Set once there is a PDF to show; the screen then replaces itself. */
-    val pdf: File? = null
-)
+    /** Set when the PDF is a local file (the office cache or a picker path). */
+    val pdf: File? = null,
+    /**
+     * Set once there is a PDF to show. For a seekable `content://` PDF this is
+     * the original URI; the file is not copied.
+     */
+    val location: DocumentLocation? = null,
+    /**
+     * Task T38b: the URI the reader opened, kept as the document's identity so
+     * the reading session is not keyed on the cache copy the viewer reads.
+     */
+    val origin: String? = null
+) {
+    val isReady: Boolean get() = location != null
+}
 
 /**
  * The one path all three entrances share - the picker in the workspace header,
@@ -51,11 +66,17 @@ class OpenDocumentViewModel(application: Application) : AndroidViewModel(applica
             _state.value = OpenDocumentState(stage = "", error = "No file was picked")
             return
         }
-        _state.value = OpenDocumentState(name = fallbackName, stage = "Copying the document...")
+        _state.value = OpenDocumentState(
+            name = fallbackName,
+            stage = "Checking the document...",
+            origin = uri.toString()
+        )
         viewModelScope.launch {
             val app = getApplication<Application>()
-            val copied = runCatching {
-                withContext(Dispatchers.IO) { cacheDocumentFromUri(app, uri, fallbackName) }
+            val inspected = runCatching {
+                withContext(Dispatchers.IO) {
+                    DocumentAccess.inspect(app, uri, fallbackName).getOrThrow()
+                }
             }.fold(
                 onSuccess = { it },
                 onFailure = { error ->
@@ -64,28 +85,98 @@ class OpenDocumentViewModel(application: Application) : AndroidViewModel(applica
                     return@launch
                 }
             )
-            _state.update { it.copy(name = copied.displayName, stage = "Checking the file...") }
+            _state.update { it.copy(name = inspected.displayName) }
 
-            when (val detected = withContext(Dispatchers.Default) { OfficeDetect.detect(copied.file) }) {
-                DocumentKind.Pdf -> {
-                    remember(app, uri, copied.displayName, RecentFile.KIND_PDF)
-                    _state.update { it.copy(stage = "", pdf = copied.file) }
+            when (inspected.kind) {
+                IncomingKind.PDF -> {
+                    val location = inspected.viewerLocation
+                    if (location == null) {
+                        fail(
+                            "${inspected.displayName} is empty and could not be opened as a PDF."
+                        )
+                        return@launch
+                    }
+                    remember(app, uri, inspected.displayName, RecentFile.KIND_PDF)
+                    _state.update {
+                        it.copy(
+                            stage = "",
+                            pdf = inspected.localFile,
+                            location = DocumentLocation(
+                                value = location,
+                                displayName = inspected.displayName,
+                                canWriteInPlace = inspected.canWriteInPlace,
+                                isContent = location.startsWith("content://")
+                            )
+                        )
+                    }
                 }
-                is DocumentKind.Office ->
-                    convert(app, uri, copied.file, copied.displayName, detected.kind)
-                DocumentKind.LegacyOffice -> fail(
-                    "${copied.displayName} is an old Word 97-2003 / PowerPoint 97-2003 file, " +
-                        "which is not supported. Open it in Word or PowerPoint, save it as " +
-                        ".docx or .pptx, then try again."
+                IncomingKind.OFFICE -> {
+                    val file = inspected.localFile
+                    if (file == null) {
+                        fail("${inspected.displayName} could not be read")
+                        return@launch
+                    }
+                    when (val detected = withContext(Dispatchers.Default) { OfficeDetect.detect(file) }) {
+                        is DocumentKind.Office ->
+                            convert(app, uri, file, inspected.displayName, detected.kind)
+                        DocumentKind.LegacyOffice -> fail(
+                            "${inspected.displayName} is an old Word 97-2003 / PowerPoint " +
+                                "97-2003 file, which is not supported. Open it in Word or " +
+                                "PowerPoint, save it as .docx or .pptx, then try again."
+                        )
+                        is DocumentKind.Other -> fail(
+                            "${inspected.displayName} is not a PDF, Word document or " +
+                                "PowerPoint presentation: ${detected.description}."
+                        )
+                        DocumentKind.Unreadable -> fail(
+                            "${inspected.displayName} looks damaged and could not be read. " +
+                                "Copy the file again from its original app."
+                        )
+                        DocumentKind.Pdf -> {
+                            file.absolutePath.let { path ->
+                                remember(app, uri, inspected.displayName, RecentFile.KIND_PDF)
+                                _state.update {
+                                    it.copy(
+                                        stage = "",
+                                        pdf = file,
+                                        location = DocumentLocation(
+                                            path,
+                                            inspected.displayName,
+                                            isContent = false
+                                        )
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+                IncomingKind.LEGACY_OFFICE -> fail(
+                    "${inspected.displayName} is an old Word 97-2003 / PowerPoint 97-2003 " +
+                        "file, which is not supported. Open it in Word or PowerPoint, save " +
+                        "it as .docx or .pptx, then try again."
                 )
-                is DocumentKind.Other -> fail(
-                    "${copied.displayName} is not a PDF, Word document or PowerPoint " +
-                        "presentation: ${detected.description}."
+                IncomingKind.IMAGE -> fail(
+                    "${inspected.displayName} is an image. Share images with PDFPaper to " +
+                        "make a PDF from them, or open a PDF file."
                 )
-                DocumentKind.Unreadable -> fail(
-                    "${copied.displayName} looks damaged and could not be read. " +
-                        "Copy the file again from its original app."
-                )
+                IncomingKind.OTHER -> {
+                    val file = inspected.localFile
+                    val description = if (file != null) {
+                        when (val detected = withContext(Dispatchers.Default) {
+                            OfficeDetect.detect(file)
+                        }) {
+                            is DocumentKind.Other -> detected.description
+                            DocumentKind.Unreadable -> "the file is damaged or empty"
+                            else -> "the file type is not supported"
+                        }
+                    } else {
+                        "the file type is not supported"
+                    }
+                    fail(
+                        "${inspected.displayName} is not a PDF, Word document or PowerPoint " +
+                            "presentation: $description."
+                    )
+                }
             }
         }
     }
@@ -104,7 +195,18 @@ class OpenDocumentViewModel(application: Application) : AndroidViewModel(applica
                     OfficeCache.store(app.cacheDir, displayName, kind, conversion.pdf, conversion.warnings)
                 }
                 remember(app, uri, displayName, kind.recentValue)
-                _state.update { it.copy(stage = "", pdf = stored.pdf) }
+                _state.update {
+                    it.copy(
+                        stage = "",
+                        pdf = stored.pdf,
+                        location = DocumentLocation(
+                            value = stored.pdf.absolutePath,
+                            displayName = displayName,
+                            canWriteInPlace = false,
+                            isContent = false
+                        )
+                    )
+                }
             },
             onFailure = { error ->
                 fail(error.message ?: "The document could not be converted")

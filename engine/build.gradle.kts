@@ -1,5 +1,9 @@
 plugins {
     id("org.jetbrains.kotlin.jvm")
+    // T66: the app's split tests build tiny PDFs with this module's own test
+    // fixture builder, so it is published as a test fixture variant instead of
+    // being duplicated in the app. Built-in Gradle plugin, nothing downloaded.
+    `java-test-fixtures`
 }
 
 java {
@@ -14,6 +18,8 @@ tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile> {
 dependencies {
     testImplementation("org.jetbrains.kotlin:kotlin-test:1.9.24")
     testImplementation("junit:junit:4.13.2")
+    // The engine's own tests keep using the fixture builder (T66).
+    testImplementation(testFixtures(project))
 }
 
 tasks.withType<Test> {
@@ -90,6 +96,17 @@ tasks.register<JavaExec>("search-regex") {
     description = "Search a PDF with a regular expression and write the matches as CSV."
     classpath = sourceSets["main"].runtimeClasspath
     mainClass.set("com.pdfpaper.engine.tools.PdfSearchRegexCliKt")
+    // Paths on the command line are resolved from the repo root, not engine/.
+    workingDir = rootProject.projectDir
+}
+
+// T66: split a document at its table of contents. Usage:
+//   ./gradlew :engine:split-toc --args="split-toc book.pdf --level 1 --out-dir parts"
+tasks.register<JavaExec>("split-toc") {
+    group = "verification"
+    description = "Split a PDF into one file per outline chapter."
+    classpath = sourceSets["main"].runtimeClasspath
+    mainClass.set("com.pdfpaper.engine.tools.PdfSplitTocCliKt")
     // Paths on the command line are resolved from the repo root, not engine/.
     workingDir = rootProject.projectDir
 }

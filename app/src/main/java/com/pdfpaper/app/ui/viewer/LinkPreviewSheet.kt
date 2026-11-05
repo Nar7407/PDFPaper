@@ -52,6 +52,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
@@ -74,7 +75,9 @@ data class LinkCardRequest(
 data class ExternalLinkRequest(
     val uri: String? = null,
     val file: String? = null,
-    val note: String? = null
+    val note: String? = null,
+    /** Static analysis of [uri]: the real host, visible text and warnings. */
+    val safety: com.pdfpaper.safety.LinkSafety? = null
 )
 
 private sealed interface PreviewState {
@@ -103,7 +106,11 @@ fun LinkPreviewSheet(
     val targets = link.targets
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val focusRequester = remember { FocusRequester() }
-    LaunchedEffect(link) { focusRequester.requestFocus() }
+    // The sheet's content is placed asynchronously, so a focus request from a
+    // LaunchedEffect can arrive before the modifier is attached (which throws).
+    // Requesting it once the column is laid out is deterministic and still
+    // moves TalkBack into the card as soon as it is on screen.
+    var focusRequested by remember(link) { mutableStateOf(false) }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -115,6 +122,12 @@ fun LinkPreviewSheet(
                 .fillMaxWidth()
                 .focusRequester(focusRequester)
                 .focusable()
+                .onGloballyPositioned {
+                    if (!focusRequested) {
+                        focusRequested = true
+                        focusRequester.requestFocus()
+                    }
+                }
                 .semantics {
                     contentDescription = if (targets.isEmpty()) {
                         "Link preview: ${link.text}. No target found."
@@ -179,7 +192,9 @@ fun LinkPreviewSheet(
                 val pagerState = rememberPagerState(initialPage = start) { targets.size }
                 HorizontalPager(
                     state = pagerState,
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag(UiTags.LINK_TARGET_PAGER),
                     userScrollEnabled = targets.size > 1,
                     pageSpacing = 12.dp
                 ) { page ->
@@ -435,26 +450,66 @@ fun PinnedLinkPanel(
 fun ExternalLinkDialog(
     request: ExternalLinkRequest,
     onDismiss: () -> Unit,
+    onCopy: () -> Unit,
     onOpen: () -> Unit
 ) {
     val isFile = request.file != null
+    val safety = request.safety
     AlertDialog(
         onDismissRequest = onDismiss,
+        modifier = Modifier.testTag(UiTags.EXTERNAL_LINK_DIALOG),
         title = {
-            Text(if (isFile) "Open linked file?" else "Open external link?")
+            Text(
+                when {
+                    isFile -> "Open linked file?"
+                    safety?.hasWarnings == true -> "Open this link?"
+                    else -> "Open external link?"
+                }
+            )
         },
         text = {
             Column {
-                val target = request.file ?: request.uri ?: ""
+                val target = request.file ?: safety?.uri ?: request.uri ?: ""
+                if (safety?.host != null) {
+                    Text(
+                        "Real domain: ${safety.domainLabel()}",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Spacer(Modifier.height(4.dp))
+                }
                 Text(target, style = MaterialTheme.typography.bodyMedium)
+                safety?.visibleText?.takeIf { it.isNotBlank() }?.let { visible ->
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        "Visible link text: $visible",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
                 Spacer(Modifier.height(8.dp))
                 Text(
                     request.note ?: if (isFile) {
                         "This link points to a different file. PDFPaper will ask before opening it."
                     } else {
-                        "This link opens in another app and leaves your reading position."
+                        "This link opens in another app and leaves your reading position. " +
+                            "PDFPaper does not open it automatically."
                     },
                     style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                safety?.warnings?.forEach { warning ->
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        text = "• $warning",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    "Only continue if you recognise the domain and expected this link.",
+                    style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
@@ -465,13 +520,19 @@ fun ExternalLinkDialog(
                 modifier = Modifier.semantics {
                     contentDescription = if (isFile) "Open linked file" else "Open external link"
                 }
-            ) { Text("Open") }
+            ) { Text("Open anyway") }
         },
         dismissButton = {
-            TextButton(
-                onClick = onDismiss,
-                modifier = Modifier.semantics { contentDescription = "Cancel opening link" }
-            ) { Text("Cancel") }
+            Row {
+                TextButton(
+                    onClick = onCopy,
+                    modifier = Modifier.testTag(UiTags.EXTERNAL_LINK_COPY)
+                ) { Text("Copy link") }
+                TextButton(
+                    onClick = onDismiss,
+                    modifier = Modifier.semantics { contentDescription = "Cancel opening link" }
+                ) { Text("Cancel") }
+            }
         }
     )
 }

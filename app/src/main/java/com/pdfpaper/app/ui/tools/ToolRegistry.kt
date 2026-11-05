@@ -174,11 +174,11 @@ object ToolRegistry {
         ToolDefinition(
             id = "split",
             name = "Split",
-            description = "Break a PDF into separate files.",
+            description = "Break a PDF into one file per chapter.",
             icon = Icons.AutoMirrored.Outlined.CallSplit,
             section = ToolSection.PAGES,
-            keywords = listOf("separate", "parts", "chunks"),
-            organizerHint = "Split: tap Apply to split every five pages."
+            keywords = listOf("separate", "parts", "chunks", "chapters", "table of contents", "toc"),
+            organizerHint = "Split: tap Apply to split at the table of contents."
         ),
         ToolDefinition(
             id = "merge",

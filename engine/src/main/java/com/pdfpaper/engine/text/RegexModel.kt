@@ -14,7 +14,7 @@ enum class RegexFlag(val label: String) {
     MULTILINE("Multiline"),
     /** A match may include a `\n`; off runs once per line, like T11. */
     ACROSS_LINES("Across lines"),
-    /** The match is not part of a longer word (a neighbour filter, never `\b`). */
+    /** A match whose neighbours are both word chars is rejected (a neighbour filter, never `\b`). */
     WHOLE_WORD("Whole word")
 }
 

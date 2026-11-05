@@ -33,6 +33,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
@@ -42,6 +43,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.pdfpaper.app.edit.EditingRuntime
 import com.pdfpaper.app.ui.UiTags
+import com.pdfpaper.app.ui.theme.LocalCodeAccents
 import com.pdfpaper.app.ui.theme.PDFPaperTheme
 
 /**
@@ -145,9 +147,20 @@ private fun ToolGroupHeader(label: String) {
         text = label,
         style = MaterialTheme.typography.labelLarge,
         fontWeight = FontWeight.SemiBold,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        color = accentOr(label, MaterialTheme.colorScheme.onSurfaceVariant),
         modifier = Modifier.padding(start = 4.dp, top = 10.dp, bottom = 2.dp)
     )
+}
+
+/**
+ * The Code style accent for [key], or [fallback] in the neutral themes. Each
+ * tool card and section gets its own accent, which is what makes the catalogue
+ * read like syntax highlighting while every colour stays above 4.5:1.
+ */
+@Composable
+private fun accentOr(key: String, fallback: Color): Color {
+    val accent = LocalCodeAccents.current.forKey(key)
+    return if (accent == Color.Unspecified) fallback else accent
 }
 
 @Composable
@@ -183,7 +196,7 @@ private fun ToolRow(
                     Icon(
                         imageVector = tool.icon,
                         contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onSurface,
+                        tint = accentOr(tool.id, MaterialTheme.colorScheme.onSurface),
                         modifier = Modifier.size(23.dp)
                     )
                 }

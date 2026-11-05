@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Task T50: the local full-text index is app-private and must never be backed up.
+  The database is the index; the WAL/SHM files are part of the same data.
+-->
+<full-backup-content>
+    <exclude domain="database" path="pdfpaper-search-index.db" />
+    <exclude domain="database" path="pdfpaper-search-index.db-wal" />
+    <exclude domain="database" path="pdfpaper-search-index.db-shm" />
+    <exclude domain="database" path="pdfpaper-search-index.db-journal" />
+</full-backup-content>

@@ -61,7 +61,9 @@ fun ToolDetailScreen(
     onOpenInfo: (path: String) -> Unit,
     onOpenCompress: (path: String) -> Unit,
     onOpenMark: (path: String, tool: String) -> Unit,
-    onOpenExport: (path: String) -> Unit
+    onOpenExport: (path: String) -> Unit,
+    onOpenCrop: (path: String) -> Unit,
+    onOpenSafety: (path: String) -> Unit
 ) {
     val tool = ToolRegistry.byId(toolId)
     if (tool == null) {
@@ -93,6 +95,8 @@ fun ToolDetailScreen(
                             ToolDestination.COMPRESS -> onOpenCompress(path)
                             ToolDestination.MARK -> onOpenMark(path, tool.id)
                             ToolDestination.EXPORT_IMAGES -> onOpenExport(path)
+                            ToolDestination.CROP -> onOpenCrop(path)
+                            ToolDestination.SAFETY -> onOpenSafety(path)
                             ToolDestination.VIEWER -> onOpenViewer(
                                 path,
                                 tool.viewerTool != null || tool.opensForms,
@@ -250,12 +254,18 @@ private fun guidanceFor(tool: ToolDefinition): String = when (tool.id) {
         "Choose a PDF to see its page count, PDF version, encryption state, size and object count."
     "compress" ->
         "Choose a PDF to see how much smaller it can get, then write the smaller copy to a new file."
+    "crop" ->
+        "Choose a PDF, drag the corners or detect the white margins, then save the cropped copy. " +
+            "The switch can also delete what is outside the box."
     "watermark" ->
         "Choose a PDF, then type the watermark (or pick a picture) and choose where it sits."
     "page-numbers" ->
         "Choose a PDF, then write the header and the footer. {page} and {pages} can be used in them."
     "bates" ->
         "Choose a PDF, then set the prefix, the first number and the corner the number goes in."
+    "safety" ->
+        "Choose a PDF to check its structure, actions, attachments and links. The check " +
+            "never runs JavaScript or opens a link, and it is not antivirus software."
     else ->
         "Choose a PDF to open it, then open the tools menu (⋮) to use ${tool.name}."
 }

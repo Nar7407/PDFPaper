@@ -86,7 +86,7 @@ fun WorkspaceHeader(
                 IconButton(onClick = onSearch) {
                     Icon(
                         imageVector = Icons.Filled.Search,
-                        contentDescription = "Search tools"
+                        contentDescription = "Search library"
                     )
                 }
                 IconButton(onClick = onSettings) {

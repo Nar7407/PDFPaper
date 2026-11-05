@@ -1,6 +1,7 @@
 package com.pdfpaper.app.ui.viewer
 
 import android.net.Uri
+import android.view.MotionEvent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
@@ -79,6 +80,8 @@ import com.pdfpaper.app.signatures.SignatureSample
 import com.pdfpaper.app.signatures.isEmpty
 import com.pdfpaper.app.signatures.previewAspect
 import com.pdfpaper.app.ui.UiTags
+import com.pdfpaper.app.ui.viewer.ink.stylusButtonTapGestures
+import com.pdfpaper.app.ui.viewer.ink.stylusPadGestures
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -599,12 +602,13 @@ private fun SignatureDrawPad(
     strokes: List<List<SignatureSample>>,
     onStrokesChange: (List<List<SignatureSample>>) -> Unit
 ) {
-    // pointerInput(Unit) never restarts, so it must not close over the current
-    // strokes parameter directly; a gesture would keep seeing the first frame's
-    // value. rememberUpdatedState supplies the latest committed list at the
-    // moment a new stroke starts, and the local list carries the points during
-    // the gesture.
+    // The gesture must not close over the current `strokes` value: pointerInput
+    // would keep seeing the first frame. rememberUpdatedState supplies the latest
+    // committed list when a new gesture starts; during the gesture a local list
+    // carries the points.
     val latestStrokes by rememberUpdatedState(strokes)
+    var working by remember { mutableStateOf<MutableList<MutableList<SignatureSample>>?>(null) }
+
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -613,40 +617,28 @@ private fun SignatureDrawPad(
             .background(Color.White, RoundedCornerShape(12.dp))
             .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(12.dp))
             .testTag(UiTags.SIGNATURE_PAD)
+            .stylusPadGestures(
+                key = Unit,
+                finger = true,
+                onPoint = { x, y, _ ->
+                    val list = working ?: latestStrokes
+                        .map { it.toMutableList() }
+                        .toMutableList()
+                        .also { working = it }
+                    if (list.isEmpty()) list.add(mutableListOf())
+                    list.last().add(SignatureSample(x = x, y = y))
+                    onStrokesChange(list.map { it.toList() })
+                },
+                onEnd = { working = null }
+            )
+            .stylusButtonTapGestures(key = Unit) {
+                val current = latestStrokes.map { it.toMutableList() }.toMutableList()
+                if (current.isNotEmpty()) current.removeAt(current.lastIndex)
+                onStrokesChange(current.map { it.toList() })
+            }
     ) {
         Canvas(
-            modifier = Modifier
-                .fillMaxSize()
-                .pointerInput(Unit) {
-                    fun point(offset: Offset): SignatureSample? {
-                        if (size.width <= 0 || size.height <= 0) return null
-                        return SignatureSample(
-                            x = (offset.x / size.width).coerceIn(0f, 1f),
-                            y = (offset.y / size.height).coerceIn(0f, 1f)
-                        )
-                    }
-                    var working: MutableList<MutableList<SignatureSample>>? = null
-                    detectDragGestures(
-                        onDragStart = { offset ->
-                            point(offset)?.let { started ->
-                                working = latestStrokes
-                                    .map { it.toMutableList() }
-                                    .toMutableList()
-                                    .apply { add(mutableListOf(started)) }
-                                onStrokesChange(working!!.map { it.toList() })
-                            }
-                        },
-                        onDrag = { change, _ ->
-                            change.consume()
-                            val next = point(change.position) ?: return@detectDragGestures
-                            val active = working ?: return@detectDragGestures
-                            active.last().add(next)
-                            onStrokesChange(active.map { it.toList() })
-                        },
-                        onDragEnd = { working = null },
-                        onDragCancel = { working = null }
-                    )
-                }
+            modifier = Modifier.fillMaxSize()
         ) {
             val baseline = size.height * 0.78f
             drawLine(

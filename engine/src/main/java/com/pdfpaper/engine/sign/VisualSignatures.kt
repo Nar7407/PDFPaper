@@ -69,7 +69,13 @@ object VisualSignatures {
          * remove a white background from a JPEG. PNG alpha uses the decoded
          * pixels that came with the image and needs no decoder.
          */
-        decoder: RasterDecoder? = null
+        decoder: RasterDecoder? = null,
+        /**
+         * The exact bytes the document was opened from (T55). When set and the
+         * annotation is not flattened, placement is appended as an incremental
+         * update instead of rewriting the whole document.
+         */
+        originalBytes: ByteArray? = null
     ): Result<VisualSignatureResult> = runCatching {
         val pages = document.pages()
         require(placement.pageIndex in pages.indices) {
@@ -98,7 +104,11 @@ object VisualSignatures {
             author = options.author,
             marker = marker
         )
-        val placedBytes = PdfPageOps.applyAnnotations(document, listOf(spec), version).getOrThrow()
+        val placedBytes = if (originalBytes != null && !options.flatten) {
+            PdfPageOps.applyAnnotationsIncremental(document, originalBytes, listOf(spec), version).getOrThrow()
+        } else {
+            PdfPageOps.applyAnnotations(document, listOf(spec), version).getOrThrow()
+        }
         val source = sourceOf(prepared)
         if (!options.flatten) {
             return@runCatching reopen(placedBytes).use { saved ->

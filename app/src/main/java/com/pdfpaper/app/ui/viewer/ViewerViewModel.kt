@@ -235,6 +235,10 @@ data class ViewerUiState(
     val orientation: ReadingOrientation = ReadingOrientation.AUTO,
     /** The tool the reader had selected last, restored as a label only. */
     val startToolId: String? = null,
+    /** T34: the paragraph the last reading aloud reached. */
+    val startSpeechPage: Int = 0,
+    val startSpeechParagraph: Int = 0,
+    val hasSavedSpeech: Boolean = false,
     /** Bumped per document, so the screen rebuilds its list state once. */
     val restoreToken: Int = 0
 )
@@ -938,7 +942,7 @@ class ViewerViewModel(application: Application) : AndroidViewModel(application) 
      * observes the hub. A start needs a foreground service, because the reading
      * carries on with the screen off.
      */
-    fun startReadAloud(fromPage: Int) {
+    fun startReadAloud(fromPage: Int, fromParagraph: Int = 0) {
         val location = state.value.sourceLocation
         if (location.isBlank()) {
             showMessage("This document has no readable location")
@@ -946,7 +950,8 @@ class ViewerViewModel(application: Application) : AndroidViewModel(application) 
         }
         val name = state.value.displayName ?: "Document"
         val position = SpeechPosition(
-            pageIndex = fromPage.coerceIn(0, (state.value.pageCount - 1).coerceAtLeast(0))
+            pageIndex = fromPage.coerceIn(0, (state.value.pageCount - 1).coerceAtLeast(0)),
+            paragraphIndex = fromParagraph.coerceAtLeast(0)
         )
         val running = ReadAloudHub.commands
         if (running != null) {
@@ -1062,6 +1067,9 @@ class ViewerViewModel(application: Application) : AndroidViewModel(application) 
                         },
                         orientation = restore.orientation,
                         startToolId = restore.lastToolId,
+                        startSpeechPage = restore.speechPage,
+                        startSpeechParagraph = restore.speechParagraph,
+                        hasSavedSpeech = restore.speechPage > 0 || restore.speechParagraph > 0,
                         restoreToken = restoreGeneration
                     )
                     _save.update {
@@ -1163,6 +1171,10 @@ class ViewerViewModel(application: Application) : AndroidViewModel(application) 
         val key = documentKey
         if (key.isBlank()) return
         val page = pageIndex.coerceIn(0, current.pageCount - 1)
+        // The speech position is written by the reading, not this scroll save;
+        // carrying it over keeps a running read-aloud offer from disappearing
+        // every time the reader turns a page.
+        val previous = readingStore.load(key)
         readingStore.save(
             key,
             currentDisplayName,
@@ -1175,12 +1187,53 @@ class ViewerViewModel(application: Application) : AndroidViewModel(application) 
                 orientation = _readingOrientation.value,
                 lastToolId = toolId,
                 flowOrder = flowOrder.coerceAtLeast(0),
+                speechPage = previous?.speechPage ?: 0,
+                speechParagraph = previous?.speechParagraph ?: 0,
                 updatedAt = System.currentTimeMillis()
             )
         )
         // The Recent row says "Page 48 of 210"; a file the reader picked is in
         // that list under the same URI, and setProgress ignores anything else.
         runCatching { RecentStore(getApplication()).setProgress(key, page, current.pageCount) }
+    }
+
+    /**
+     * T34: remembers where read aloud was, so a killed process loses at most
+     * the paragraph being spoken. The reading itself is not restarted on open;
+     * the viewer offers "Continue reading aloud" instead.
+     */
+    fun saveSpeechPosition(pageIndex: Int, paragraphIndex: Int) {
+        if (readingSuppressed) return
+        val current = _state.value
+        if (current.isLoading || current.pageCount <= 0) return
+        val key = documentKey
+        if (key.isBlank()) return
+        val page = pageIndex.coerceIn(0, current.pageCount - 1)
+        val paragraph = paragraphIndex.coerceAtLeast(0)
+        val saved = readingStore.load(key)
+        val next = saved?.copy(
+            speechPage = page,
+            speechParagraph = paragraph,
+            pageCount = current.pageCount,
+            updatedAt = System.currentTimeMillis()
+        ) ?: ReadingState(
+            pageIndex = current.startPage.coerceIn(0, current.pageCount - 1),
+            pageCount = current.pageCount,
+            zoom = current.startZoom,
+            mode = current.startMode,
+            orientation = _readingOrientation.value,
+            speechPage = page,
+            speechParagraph = paragraph,
+            updatedAt = System.currentTimeMillis()
+        )
+        readingStore.save(key, currentDisplayName, next)
+        _state.update {
+            it.copy(
+                startSpeechPage = page,
+                startSpeechParagraph = paragraph,
+                hasSavedSpeech = page > 0 || paragraph > 0
+            )
+        }
     }
 
     /** The orientation the reader chose for this document. */

@@ -3,6 +3,8 @@ package com.pdfpaper.app.render
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.ColorMatrix
+import android.graphics.ColorMatrixColorFilter
 import android.graphics.DashPathEffect
 import android.graphics.Matrix
 import android.graphics.Paint
@@ -12,6 +14,9 @@ import android.graphics.PorterDuffXfermode
 import android.graphics.RectF
 import android.graphics.Typeface
 import android.graphics.Xfermode
+import com.pdfpaper.engine.eink.EinkPipeline
+import com.pdfpaper.engine.eink.EinkProfile
+import com.pdfpaper.engine.eink.EinkSettings
 import com.pdfpaper.engine.geom.PdfMatrix
 import com.pdfpaper.engine.graphics.ClosePath
 import com.pdfpaper.engine.graphics.CurveTo
@@ -21,6 +26,8 @@ import com.pdfpaper.engine.graphics.MoveTo
 import com.pdfpaper.engine.graphics.PdfColor
 import com.pdfpaper.engine.graphics.PdfPath
 import com.pdfpaper.engine.image.RasterImage
+import com.pdfpaper.engine.render.ColorTransform
+import com.pdfpaper.engine.render.PageTheme
 import com.pdfpaper.engine.render.Renderer
 import com.pdfpaper.engine.text.PdfTextRun
 import java.io.File
@@ -38,17 +45,71 @@ import kotlin.math.roundToInt
  * into the alpha here and stencil masks are tinted with the fill colour
  * (§8.9.6.2). Text uses an embedded font program when the platform can load
  * it, otherwise a system font standing in for the standard-14 families.
+ *
+ * [theme] (T32/T32b) is applied to each primitive as it is drawn, so a dark
+ * or true-black page is composited from themed colours rather than an inverted
+ * bitmap: anti-aliased edges blend mapped ink into the mapped background and
+ * photographs pass through untouched.
  */
 class AndroidRenderer(
     private val canvas: Canvas,
     /** Where embedded font programs are cached as files; null disables them. */
-    private val fontDir: File? = null
+    private val fontDir: File? = null,
+    /** Page theme; [PageTheme.OFF] paints the document as authored. */
+    private val theme: PageTheme = PageTheme.OFF,
+    /**
+     * T62: the reader's colour look. It is applied to the colours handed to the
+     * canvas (and to image pixels), so a sepia or inverted page is composited
+     * from mapped colours rather than being a filtered bitmap.
+     */
+    private val transform: ColorTransform = ColorTransform.NONE,
+    /**
+     * T63: the E-Ink profile. Profile 2 (`1-bit text`) turns anti-aliasing off
+     * and paints text, fills and strokes in black or white at the reader's
+     * threshold, so a glyph edge cannot become a grey smudge; pictures are
+     * dithered on their own pixels. Profile 3 is reduced after painting.
+     */
+    private val eink: EinkSettings = EinkSettings.OFF,
+    /** Device pixels per user unit of the page plan (T63 minimum line width). */
+    private val baseScale: Double = 1.0
 ) : Renderer {
 
-    private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG)
-    private val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
-    private val imagePaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
-    private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.SUBPIXEL_TEXT_FLAG)
+    /** Profile 2 paints primitives without anti-aliasing (T63). */
+    private val crisp = eink.profile == EinkProfile.TEXT_BITONAL
+
+    private val fillPaint = Paint(if (crisp) 0 else Paint.ANTI_ALIAS_FLAG)
+    private val strokePaint = Paint(if (crisp) 0 else Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+    }
+    private val imagePaint = Paint(if (crisp) 0 else Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG).apply {
+        // A dithered picture must not be smoothed back into greys when it is
+        // scaled, so profile 2 draws it with nearest-neighbour sampling.
+        isFilterBitmap = !crisp
+    }
+    private val textPaint = Paint(if (crisp) 0 else Paint.ANTI_ALIAS_FLAG or Paint.SUBPIXEL_TEXT_FLAG).apply {
+        val ink = theme.text()
+        color = if (crisp) Color.BLACK else transform.grade(ink.color).toArgb(ink.alpha)
+    }
+
+    /** Raster dimming for photographs (T32b); null while it is a no-op. */
+    private val dimFilter: ColorMatrixColorFilter? = run {
+        val dim = theme.imageDim()
+        if (dim >= 0.999) {
+            null
+        } else {
+            val scale = dim.toFloat().coerceIn(0.0f, 1.0f)
+            ColorMatrixColorFilter(
+                ColorMatrix(
+                    floatArrayOf(
+                        scale, 0f, 0f, 0f, 0f,
+                        0f, scale, 0f, 0f, 0f,
+                        0f, 0f, scale, 0f, 0f,
+                        0f, 0f, 0f, 1f, 0f
+                    )
+                )
+            )
+        }
+    }
 
     /** Embedded font programs keyed by identity; a null value caches failure. */
     private val embeddedTypefaces = HashMap<Int, Typeface?>()
@@ -94,9 +155,14 @@ class AndroidRenderer(
         alpha: Double,
         evenOdd: Boolean
     ) {
+        val paint = theme.fill(color, alpha)
         withMatrix(matrix) {
             fillPaint.xfermode = xfermode
-            fillPaint.color = color.toArgb(alpha)
+            if (crisp) {
+                fillPaint.color = eink.binaryFill(paint.color).toArgb(1.0)
+            } else {
+                fillPaint.color = transform.grade(paint.color).toArgb(paint.alpha)
+            }
             canvas.drawPath(path.toAndroidPath(evenOdd), fillPaint)
         }
     }
@@ -108,20 +174,28 @@ class AndroidRenderer(
         alpha: Double,
         lineStyle: LineStyle
     ) {
+        val paint = theme.stroke(color, alpha)
         withMatrix(matrix) {
-            applyLineStyle(lineStyle)
+            applyLineStyle(lineStyle, matrix)
             strokePaint.xfermode = xfermode
-            strokePaint.color = color.toArgb(alpha)
+            if (crisp) {
+                strokePaint.color = eink.binaryStroke(paint.color).toArgb(1.0)
+            } else {
+                strokePaint.color = transform.grade(paint.color).toArgb(paint.alpha)
+            }
             canvas.drawPath(path.toAndroidPath(false), strokePaint)
         }
     }
 
     override fun drawImage(image: RasterImage, matrix: PdfMatrix, fillColor: PdfColor, alpha: Double) {
-        val bitmap = bitmapFrom(image, if (image.stencil) fillColor else null)
+        val tint = if (image.stencil) theme.stencil(fillColor).color else null
+        val bitmap = bitmapFrom(image, tint)
         if (bitmap != null) {
             withMatrix(matrix) {
                 imagePaint.xfermode = xfermode
                 imagePaint.alpha = alphaByte(alpha)
+                // A photograph keeps its own colours unless dim is set (T32b).
+                imagePaint.colorFilter = dimFilter
                 canvas.drawBitmap(bitmap, null, UNIT_RECT, imagePaint)
             }
             bitmap.recycle()
@@ -169,8 +243,16 @@ class AndroidRenderer(
         canvas.restore()
     }
 
-    private fun applyLineStyle(style: LineStyle) {
-        strokePaint.strokeWidth = style.width.toFloat().coerceAtLeast(0.0f)
+    private fun applyLineStyle(style: LineStyle, matrix: PdfMatrix) {
+        // T63: a one-bit profile thickens a hairline to at least one device
+        // pixel, or the threshold erases a 0.2 pt rule entirely. Profile 3 does
+        // this too, because it is the final threshold that would lose the line.
+        val width = if (eink.bitonal) {
+            eink.strokeWidth(style.width, baseScale * matrix.meanScale())
+        } else {
+            style.width
+        }
+        strokePaint.strokeWidth = width.toFloat().coerceAtLeast(0.0f)
         strokePaint.strokeCap = when (style.cap) {
             1 -> Paint.Cap.ROUND
             2 -> Paint.Cap.SQUARE
@@ -268,6 +350,13 @@ class AndroidRenderer(
             if (soft != null) a = a * soft[i] / 255
             argb[i] = (a shl 24) or (r shl 16) or (g shl 8) or b
         }
+        // T62: the look maps image pixels too - sepia tints a photograph and
+        // inverted monochrome inverts it - so a filtered page keeps no
+        // original colour. One in-place pass, one buffer per thread.
+        transform.apply(argb)
+        // T63: profile 2 dithers the picture itself, so the text around it can
+        // stay a crisp one-bit glyph while a photo keeps its tones.
+        if (eink.ditheredImages) EinkPipeline.ditherImage(argb, width, height, eink)
         val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
         bitmap.setPixels(argb, 0, width, 0, 0, width, height)
         return bitmap

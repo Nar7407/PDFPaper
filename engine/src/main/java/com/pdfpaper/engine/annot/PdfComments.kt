@@ -127,6 +127,40 @@ object PdfComments {
         PdfPageOps.edit(document, additions, emptyMap(), deletionClosure(document, deletions)).getOrThrow()
     }
 
+    /** Deletes [deletions] through the same closure used by [edit]. */
+    fun deletionClosureFor(document: PdfDocument, deletions: List<Int>): Result<Set<Int>> =
+        runCatching { deletionClosure(document, deletions) }
+
+    /**
+     * Incremental variant of [edit] (T55): adds and deletes comments by
+     * appending a new revision to [originalBytes]. Use this for replies, review
+     * states and ordinary comment changes when the file can be written in
+     * place; page operations still use a full rewrite.
+     */
+    fun editIncremental(
+        document: PdfDocument,
+        originalBytes: ByteArray,
+        additions: List<AnnotationSpec> = emptyList(),
+        deletions: List<Int> = emptyList()
+    ): Result<ByteArray> = runCatching {
+        val index = commentIndex(document)
+        for (spec in additions) {
+            when (spec) {
+                is ReplySpec -> requireComment(index, spec.targetObjNum, spec.pageIndex)
+                is StatusSpec -> requireComment(index, spec.targetObjNum, spec.pageIndex)
+                else -> {}
+            }
+        }
+        val dropped = deletionClosure(document, deletions)
+        com.pdfpaper.engine.write.PdfPageOps.editIncremental(
+            document,
+            originalBytes,
+            additions,
+            emptyMap(),
+            dropped
+        ).getOrThrow()
+    }
+
     /** All comments by object number, replies included. */
     private fun commentIndex(document: PdfDocument): Map<Int, PdfComment> {
         val out = HashMap<Int, PdfComment>()

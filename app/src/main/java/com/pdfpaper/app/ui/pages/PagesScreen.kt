@@ -8,6 +8,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -54,7 +55,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.pdfpaper.app.data.AppSettings
 import com.pdfpaper.app.data.copyPdfToCache
+import com.pdfpaper.app.render.toArgb
 import com.pdfpaper.app.ui.PasswordDialog
 import com.pdfpaper.app.ui.theme.PDFPaperTheme
 import com.pdfpaper.app.ui.tools.ToolRegistry
@@ -77,20 +80,31 @@ fun PagesScreen(
     path: String,
     hint: String? = null,
     toolId: String = "",
+    extraPaths: List<String> = emptyList(),
     onBack: () -> Unit = {},
+    onSplitChapters: () -> Unit = {},
     viewModel: PagesViewModel = viewModel()
 ) {
     val state by viewModel.state.collectAsState()
     val plan by viewModel.plan.collectAsState()
     val boxes by viewModel.boxes.collectAsState()
     val thumbs by viewModel.thumbs.collectAsState()
+    val theme by viewModel.pageTheme.collectAsState()
+    val look by viewModel.look.collectAsState()
+    val themeGeneration by viewModel.themeGeneration.collectAsState()
     val tool = ToolRegistry.byId(toolId)
 
     val snackbar = remember { SnackbarHostState() }
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val systemDark = isSystemInDarkTheme()
+    val pageBackground = remember(theme, look) { Color(look.background(theme).toArgb(1.0)) }
 
-    LaunchedEffect(path) { viewModel.load(path) }
+    LaunchedEffect(path, extraPaths) { viewModel.load(path, extraPaths) }
+    // T32/T32b + T62: thumbnails follow the same theme and look as the viewer.
+    LaunchedEffect(path, systemDark) {
+        viewModel.refreshLook(systemDark)
+    }
     LaunchedEffect(hint) {
         if (!hint.isNullOrBlank()) snackbar.showSnackbar(hint)
     }
@@ -167,6 +181,8 @@ fun PagesScreen(
                                 box = boxes.getOrNull(position),
                                 bitmap = thumbs[position],
                                 selected = position in state.selection,
+                                generation = themeGeneration,
+                                pageBackground = pageBackground,
                                 onToggle = viewModel::toggleSelection,
                                 onVisible = viewModel::onThumbVisible,
                                 onHidden = viewModel::onThumbHidden
@@ -194,7 +210,11 @@ fun PagesScreen(
                 onExtract = { viewModel.requestSave(selectedOnly = true) },
                 onSave = { viewModel.requestSave(selectedOnly = false) },
                 onAddPdf = { openDoc.launch(arrayOf("application/pdf")) },
-                onSplit = { viewModel.requestSplit(5) }
+                onSplit = {
+                    // T66: the Split tool opens the chapter screen; other tools
+                    // keep the plain every-five-pages split.
+                    if (toolId == "split") onSplitChapters() else viewModel.requestSplit(5)
+                }
             )
         }
     }
@@ -296,6 +316,8 @@ private fun PageCell(
     box: PageBox?,
     bitmap: Bitmap?,
     selected: Boolean,
+    generation: Int,
+    pageBackground: Color,
     onToggle: (Int) -> Unit,
     onVisible: (Int, Int) -> Unit,
     onHidden: (Int) -> Unit
@@ -306,7 +328,9 @@ private fun PageCell(
     }
     val borderColor = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant
 
-    LaunchedEffect(position) { onVisible(position, 320) }
+    // The generation is part of the key so a theme switch re-requests the
+    // thumbnail of a cell that is already on screen (T32b).
+    LaunchedEffect(position, generation) { onVisible(position, 320) }
     DisposableEffect(position) { onDispose { onHidden(position) } }
 
     Box(
@@ -314,7 +338,7 @@ private fun PageCell(
             .fillMaxWidth()
             .aspectRatio(aspect)
             .clip(RoundedCornerShape(6.dp))
-            .background(Color.White)
+            .background(pageBackground)
             .border(if (selected) 3.dp else 1.dp, borderColor, RoundedCornerShape(6.dp))
             .clickable { onToggle(position) },
         contentAlignment = Alignment.Center

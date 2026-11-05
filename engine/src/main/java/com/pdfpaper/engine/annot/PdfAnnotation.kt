@@ -131,6 +131,16 @@ class PdfAnnotation(
     /** Flags that suppress display entirely (§12.5.3, Table 165). */
     val hidden: Boolean get() = flags and (INVISIBLE or HIDDEN or NO_VIEW) != 0
 
+    /**
+     * /CreationDate as epoch milliseconds, or null when it is absent or
+     * malformed (T56). The engine writes UTC dates; a date without an offset is
+     * read as UTC, the same rule comment threading uses.
+     */
+    val createdAtMillis: Long? get() = PdfDate.millis(creationDate)
+
+    /** /M as epoch milliseconds, or null when it is absent or malformed (T56). */
+    val modifiedAtMillis: Long? get() = PdfDate.millis(modifiedDate)
+
     /** True when the annotation has a border a reader would draw. */
     val hasVisibleBorder: Boolean get() = (borderWidth ?: 0.0) > 0.0
 

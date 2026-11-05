@@ -100,6 +100,24 @@ class PdfDocument private constructor(val file: PdfFile) : Closeable {
         return resolve(PdfRef(root.objNum, root.gen))
     }
 
+    /**
+     * The trailer dictionary as objects (T66): `/Info`, `/Root`, `/Prev` and
+     * every other entry of the file trailer, parsed once. Callers that report
+     * on a written file (the split report) need `/Info`; the reader itself uses
+     * [file] directly.
+     */
+    fun trailer(): PdfDict {
+        val entries = LinkedHashMap<PdfName, PdfObject>()
+        for ((key, raw) in file.trailer.raw) {
+            val name = PdfName(key)
+            val parsed = PdfRef.parse(raw)
+                ?: raw.trim().toLongOrNull()?.let { PdfInteger(it) }
+                ?: continue
+            entries[name] = parsed
+        }
+        return PdfDict(entries)
+    }
+
     private fun storeNull(objNum: Int): PdfObject? {
         cache[objNum] = null
         return null

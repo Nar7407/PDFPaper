@@ -28,7 +28,7 @@ endobj
 << /Type /Annot /Subtype /Link /Rect [0 0 40 40] /Dest [3 0 R /Fit] >>
 endobj
 9 0 obj
-<< /Type /Annot /Subtype /Highlight /Rect [20 100 80 115] /F 4 /M (D:20261105112852Z) /P 1 0 R /Contents (Yellow highlight) /T (Alice) /CreationDate (D:20261105112852Z) /C [1 1 0] /CA 0.5 /QuadPoints [20 115 80 115 20 100 80 100] /AP << /N 10 0 R >> >>
+<< /Type /Annot /Subtype /Highlight /Rect [20 100 80 115] /F 4 /M (D:20261105123307Z) /P 1 0 R /Contents (Yellow highlight) /T (Alice) /CreationDate (D:20261105123307Z) /C [1 1 0] /CA 0.5 /QuadPoints [20 115 80 115 20 100 80 100] /AP << /N 10 0 R >> >>
 endobj
 10 0 obj
 << /Type /XObject /Subtype /Form /FormType 1 /BBox [0 0 60 15] /Resources << /ExtGState << /GS0 << /ca 0.5 /CA 0.5 /BM /Multiply >> >> >> /Length 35 >>
@@ -37,7 +37,7 @@ q /GS0 gs 1 1 0 rg 0 0 60 15 re f Q
 endstream
 endobj
 11 0 obj
-<< /Type /Annot /Subtype /Highlight /Rect [20 80 80 95] /F 4 /M (D:20261105112852Z) /P 1 0 R /Contents (Green highlight) /T (Bob) /CreationDate (D:20261105112852Z) /C [0 1 0] /CA 0.5 /QuadPoints [20 95 80 95 20 80 80 80] /AP << /N 12 0 R >> >>
+<< /Type /Annot /Subtype /Highlight /Rect [20 80 80 95] /F 4 /M (D:20261105123307Z) /P 1 0 R /Contents (Green highlight) /T (Bob) /CreationDate (D:20261105123307Z) /C [0 1 0] /CA 0.5 /QuadPoints [20 95 80 95 20 80 80 80] /AP << /N 12 0 R >> >>
 endobj
 12 0 obj
 << /Type /XObject /Subtype /Form /FormType 1 /BBox [0 0 60 15] /Resources << /ExtGState << /GS0 << /ca 0.5 /CA 0.5 /BM /Multiply >> >> >> /Length 35 >>
@@ -46,7 +46,7 @@ q /GS0 gs 0 1 0 rg 0 0 60 15 re f Q
 endstream
 endobj
 13 0 obj
-<< /Type /Annot /Subtype /Highlight /Rect [20 60 80 75] /F 4 /M (D:20261105112852Z) /P 1 0 R /Contents (Red highlight) /T (Charlie) /CreationDate (D:20261105112852Z) /C [1 0 0] /CA 0.5 /QuadPoints [20 75 80 75 20 60 80 60] /AP << /N 14 0 R >> >>
+<< /Type /Annot /Subtype /Highlight /Rect [20 60 80 75] /F 4 /M (D:20261105123307Z) /P 1 0 R /Contents (Red highlight) /T (Charlie) /CreationDate (D:20261105123307Z) /C [1 0 0] /CA 0.5 /QuadPoints [20 75 80 75 20 60 80 60] /AP << /N 14 0 R >> >>
 endobj
 14 0 obj
 << /Type /XObject /Subtype /Form /FormType 1 /BBox [0 0 60 15] /Resources << /ExtGState << /GS0 << /ca 0.5 /CA 0.5 /BM /Multiply >> >> >> /Length 35 >>
@@ -55,7 +55,7 @@ q /GS0 gs 1 0 0 rg 0 0 60 15 re f Q
 endstream
 endobj
 15 0 obj
-<< /Type /Annot /Subtype /Underline /Rect [20 40 80 50] /F 4 /M (D:20261105112852Z) /P 1 0 R /Contents (Red underline) /T (Alice) /CreationDate (D:20261105112852Z) /C [1 0 0] /QuadPoints [20 50 80 50 20 40 80 40] /AP << /N 16 0 R >> >>
+<< /Type /Annot /Subtype /Underline /Rect [20 40 80 50] /F 4 /M (D:20261105123307Z) /P 1 0 R /Contents (Red underline) /T (Alice) /CreationDate (D:20261105123307Z) /C [1 0 0] /QuadPoints [20 50 80 50 20 40 80 40] /AP << /N 16 0 R >> >>
 endobj
 16 0 obj
 << /Type /XObject /Subtype /Form /FormType 1 /BBox [0 0 60 10] /Length 31 >>
@@ -64,7 +64,7 @@ q 1 0 0 RG 1 w 0 0 m 60 0 l S Q
 endstream
 endobj
 17 0 obj
-<< /Type /Annot /Subtype /Ink /Rect [8 8 32 22] /F 4 /M (D:20261105112852Z) /P 1 0 R /Contents (Blue ink drawing) /T (Bob) /C [0 0 1] /InkList [[10 10 20 20 30 10]] /BS << /W 2 /S /S >> /AP << /N 18 0 R >> >>
+<< /Type /Annot /Subtype /Ink /Rect [8 8 32 22] /F 4 /M (D:20261105123307Z) /P 1 0 R /Contents (Blue ink drawing) /T (Bob) /C [0 0 1] /InkList [[10 10 20 20 30 10]] /BS << /W 2 /S /S >> /AP << /N 18 0 R >> >>
 endobj
 18 0 obj
 << /Type /XObject /Subtype /Form /FormType 1 /BBox [0 0 24 14] /Length 47 >>
@@ -73,7 +73,7 @@ q 0 0 1 RG 2 w 1 J 1 j 2 2 m 12 12 l 22 2 l S Q
 endstream
 endobj
 19 0 obj
-<< /Type /Annot /Subtype /Text /Rect [5 150 25 170] /F 4 /M (D:20261105112852Z) /P 1 0 R /Contents (Yellow note on page 1) /T (Alice) /CreationDate (D:20261105112852Z) /Name /Note /C [1 0.87 0] /Open false /AP << /N 20 0 R >> >>
+<< /Type /Annot /Subtype /Text /Rect [5 150 25 170] /F 4 /M (D:20261105123307Z) /P 1 0 R /Contents (Yellow note on page 1) /T (Alice) /CreationDate (D:20261105123307Z) /Name /Note /C [1 0.87 0] /Open false /AP << /N 20 0 R >> >>
 endobj
 20 0 obj
 << /Type /XObject /Subtype /Form /FormType 1 /BBox [0 0 20 20] /Length 108 >>
@@ -82,12 +82,12 @@ q 1 0.87 0 rg 0 0 20 20 re f 0 0 0 RG 0.75 w 0.375 0.375 19.25 19.25 re S 0.75 w
 endstream
 endobj
 21 0 obj
-<< /Type /Annot /Subtype /Stamp /Rect [100 100 180 126.666667] /F 4 /M (D:20261105112852Z) /P 1 0 R /Contents (Approved - By Charlie, 2026-11-05 11:28) /T (Charlie) /Subj (Dynamic) /CreationDate (D:20261105112852Z) /Name /Approved /AP << /N 22 0 R >> >>
+<< /Type /Annot /Subtype /Stamp /Rect [100 100 180 126.666667] /F 4 /M (D:20261105123307Z) /P 1 0 R /Contents (Approved - By Charlie, 2026-11-05 12:33) /T (Charlie) /Subj (Dynamic) /CreationDate (D:20261105123307Z) /Name /Approved /AP << /N 22 0 R >> >>
 endobj
 22 0 obj
 << /Type /XObject /Subtype /Form /FormType 1 /BBox [0 0 80 26.666667] /Resources << /Font << /F1 23 0 R /F2 24 0 R >> >> /Length 405 >>
 stream
-q 0.94 0.98 0.94 rg 0 0 80 26.666667 re f q 0.03 0.45 0.18 RG 1.2 w 0.6 0.6 78.8 25.466667 re S Q BT /F1 10.666667 Tf 0.03 0.45 0.18 rg 1 0 0 1 10.069333 16.533333 Tm (APPROVED) Tj ET q 0.03 0.45 0.18 RG 0.7 w 4 11.2 m 76 11.2 l S Q BT /F2 4.533333 Tf 0.03 0.45 0.18 rg 1 0 0 1 4 4.266667 Tm (By Charlie) Tj ET BT /F2 4.533333 Tf 0.03 0.45 0.18 rg 1 0 0 1 40.213867 4.266667 Tm (2026-11-05 11:28) Tj ET  Q
+q 0.94 0.98 0.94 rg 0 0 80 26.666667 re f q 0.03 0.45 0.18 RG 1.2 w 0.6 0.6 78.8 25.466667 re S Q BT /F1 10.666667 Tf 0.03 0.45 0.18 rg 1 0 0 1 10.069333 16.533333 Tm (APPROVED) Tj ET q 0.03 0.45 0.18 RG 0.7 w 4 11.2 m 76 11.2 l S Q BT /F2 4.533333 Tf 0.03 0.45 0.18 rg 1 0 0 1 4 4.266667 Tm (By Charlie) Tj ET BT /F2 4.533333 Tf 0.03 0.45 0.18 rg 1 0 0 1 40.213867 4.266667 Tm (2026-11-05 12:33) Tj ET  Q
 endstream
 endobj
 23 0 obj
@@ -130,7 +130,7 @@ BT /F1 12 Tf 10 10 Td (P2) Tj ET
 endstream
 endobj
 30 0 obj
-<< /Type /Annot /Subtype /Highlight /Rect [30 100 90 115] /F 4 /M (D:20261105112852Z) /P 2 0 R /Contents (Yellow highlight on page 2) /T (Alice) /CreationDate (D:20261105112852Z) /C [1 1 0] /CA 0.5 /QuadPoints [30 115 90 115 30 100 90 100] /AP << /N 31 0 R >> >>
+<< /Type /Annot /Subtype /Highlight /Rect [30 100 90 115] /F 4 /M (D:20261105123307Z) /P 2 0 R /Contents (Yellow highlight on page 2) /T (Alice) /CreationDate (D:20261105123307Z) /C [1 1 0] /CA 0.5 /QuadPoints [30 115 90 115 30 100 90 100] /AP << /N 31 0 R >> >>
 endobj
 31 0 obj
 << /Type /XObject /Subtype /Form /FormType 1 /BBox [0 0 60 15] /Resources << /ExtGState << /GS0 << /ca 0.5 /CA 0.5 /BM /Multiply >> >> >> /Length 35 >>
@@ -139,7 +139,7 @@ q /GS0 gs 1 1 0 rg 0 0 60 15 re f Q
 endstream
 endobj
 32 0 obj
-<< /Type /Annot /Subtype /Ink /Rect [38 38 52 52] /F 4 /M (D:20261105112852Z) /P 2 0 R /Contents (Red ink on page 2) /T (Bob) /C [1 0 0] /InkList [[40 40 50 50]] /BS << /W 2 /S /S >> /AP << /N 33 0 R >> >>
+<< /Type /Annot /Subtype /Ink /Rect [38 38 52 52] /F 4 /M (D:20261105123307Z) /P 2 0 R /Contents (Red ink on page 2) /T (Bob) /C [1 0 0] /InkList [[40 40 50 50]] /BS << /W 2 /S /S >> /AP << /N 33 0 R >> >>
 endobj
 33 0 obj
 << /Type /XObject /Subtype /Form /FormType 1 /BBox [0 0 14 14] /Length 40 >>
@@ -172,7 +172,7 @@ BT /F1 12 Tf 10 10 Td (P3) Tj ET
 endstream
 endobj
 36 0 obj
-<< /Type /Annot /Subtype /Text /Rect [10 10 30 30] /F 4 /M (D:20261105112852Z) /P 3 0 R /Contents (Note on page 3) /T (Charlie) /CreationDate (D:20261105112852Z) /Name /Note /C [1 0.87 0] /Open false /AP << /N 37 0 R >> >>
+<< /Type /Annot /Subtype /Text /Rect [10 10 30 30] /F 4 /M (D:20261105123307Z) /P 3 0 R /Contents (Note on page 3) /T (Charlie) /CreationDate (D:20261105123307Z) /Name /Note /C [1 0.87 0] /Open false /AP << /N 37 0 R >> >>
 endobj
 37 0 obj
 << /Type /XObject /Subtype /Form /FormType 1 /BBox [0 0 20 20] /Length 108 >>

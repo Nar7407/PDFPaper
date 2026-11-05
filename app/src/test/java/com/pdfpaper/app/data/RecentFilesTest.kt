@@ -1,6 +1,7 @@
 package com.pdfpaper.app.data
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -58,5 +59,39 @@ class RecentFilesTest {
         assertTrue(RecentCodec.decode(null).isEmpty())
         assertTrue(RecentCodec.decode("").isEmpty())
         assertTrue(RecentCodec.decode("   \n\t\n").isEmpty())
+    }
+
+    @Test
+    fun theSavedPositionRoundTripsAndSurvivesAReAdd() {
+        val saved = RecentFile("content://doc/1", "book.pdf", page = 47, pageCount = 210)
+
+        val decoded = RecentCodec.decode(RecentCodec.encode(listOf(saved)))
+        assertEquals(listOf(saved), decoded)
+        assertEquals("Page 48 of 210", decoded.single().progressLabel)
+
+        // Opening a document re-adds it before the viewer knows the page, so
+        // the old position must survive that re-add.
+        val reopened = RecentCodec.add(
+            decoded,
+            RecentFile("content://doc/1", "book.pdf")
+        )
+        assertEquals(47, reopened.single().page)
+        assertEquals(210, reopened.single().pageCount)
+    }
+
+    @Test
+    fun aRecordWithoutAPositionStillDecodes() {
+        // A record written before T38b has only the URI and the name.
+        val uri = java.util.Base64.getUrlEncoder().withoutPadding()
+            .encodeToString("content://doc/1".toByteArray())
+        val name = java.util.Base64.getUrlEncoder().withoutPadding()
+            .encodeToString("one.pdf".toByteArray())
+
+        val decoded = RecentCodec.decode("$uri\t$name").single()
+
+        assertEquals("content://doc/1", decoded.uri)
+        assertEquals(0, decoded.page)
+        assertEquals(0, decoded.pageCount)
+        assertNull(decoded.progressLabel)
     }
 }

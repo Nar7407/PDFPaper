@@ -20,13 +20,24 @@ fun queryDisplayName(context: Context, uri: Uri): String? {
 }
 
 /**
- * Makes the provider's read grant survive the activity, when the provider
- * allows it. Best-effort: a URI opened through ACTION_VIEW carries a transient
- * grant only, and asking for persistence there is not an error.
+ * Makes the provider's grant survive the activity, when the provider allows it.
+ * Read+write is preferred so a document received through ACTION_VIEW can still
+ * be saved in place after the transient grant is gone; a provider that only
+ * persists reads falls back to the read grant. Best-effort: a URI opened
+ * through ACTION_VIEW may carry a transient grant only, and asking for
+ * persistence there is not an error.
  */
 fun rememberUriPermission(context: Context, uri: Uri) {
+    val resolver = context.contentResolver
+    val readWrite = runCatching {
+        resolver.takePersistableUriPermission(
+            uri,
+            Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+        )
+    }
+    if (readWrite.isSuccess) return
     runCatching {
-        context.contentResolver.takePersistableUriPermission(
+        resolver.takePersistableUriPermission(
             uri,
             Intent.FLAG_GRANT_READ_URI_PERMISSION
         )

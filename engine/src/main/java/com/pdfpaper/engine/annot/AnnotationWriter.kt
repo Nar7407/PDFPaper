@@ -156,6 +156,7 @@ internal class AnnotationWriter(private val builder: PdfDocumentBuilder) {
         is HighlightSpec -> buildHighlight(spec, pageRef, pageBox)
         is UnderlineSpec -> buildUnderline(spec, pageRef, pageBox)
         is InkSpec -> listOfNotNull(buildInk(spec, pageRef))
+        is RichInkSpec -> listOfNotNull(buildRichInk(spec, pageRef))
         is NoteSpec -> buildNote(spec, pageRef, pageBox)
         is ReplySpec -> buildReply(spec, pageRef, resolveAnnot)
         is StatusSpec -> buildStatus(spec, pageRef, resolveAnnot)
@@ -267,6 +268,163 @@ internal class AnnotationWriter(private val builder: PdfDocumentBuilder) {
         )
         annot[PdfName("AP")] = dict("N" to ap)
         return builder.add(PdfDict(annot))
+    }
+
+    /**
+     * T54: a pressure-sensitive ink annotation. The appearance is a set of
+     * filled quads (one per segment) plus round joins/caps, so width really
+     * varies with pressure instead of being a single stroked polyline. The
+     * sampled `x y pressure` points are also stored under `/PdfPaperInk`, which
+     * lets PDFPaper re-open the annotation as editable strokes; other readers
+     * only need `/AP /N` and `/InkList` (§12.5.5, §12.5.6.13).
+     */
+    private fun buildRichInk(spec: RichInkSpec, pageRef: PdfRef): PdfRef? {
+        val strokes = spec.strokes.mapNotNull { stroke ->
+            val clean = stroke
+                .filter { it.x.isFinite() && it.y.isFinite() }
+                .map { it.copy(pressure = it.pressure.coerceIn(0.0, 1.0)) }
+            clean.ifEmpty { null }
+        }
+        if (strokes.isEmpty() || !spec.width.isFinite() || spec.width <= 0.0) return null
+        val base = spec.width.coerceIn(0.1, 100.0)
+        val opacity = spec.opacity.coerceIn(0.0, 1.0)
+        val highlighter = spec.tool == InkTool.HIGHLIGHTER
+        fun half(point: InkPoint): Double =
+            if (highlighter) base / 2.0 else base * (0.35 + 0.65 * point.pressure) / 2.0
+
+        var minX = Double.MAX_VALUE
+        var minY = Double.MAX_VALUE
+        var maxX = -Double.MAX_VALUE
+        var maxY = -Double.MAX_VALUE
+        var maxHalf = 0.0
+        for (stroke in strokes) for (point in stroke) {
+            minX = minOf(minX, point.x); maxX = maxOf(maxX, point.x)
+            minY = minOf(minY, point.y); maxY = maxOf(maxY, point.y)
+            maxHalf = maxOf(maxHalf, half(point))
+        }
+        val pad = maxHalf + 1.0
+        val box = PdfRect(minX - pad, minY - pad, maxX + pad, maxY + pad)
+        val content = buildString {
+            append("q ")
+            if (opacity < 1.0) append("/GS0 gs ")
+            append(rgb(spec.color)).append(' ')
+            for (stroke in strokes) {
+                val pts = stroke.map { InkPoint(it.x - box.left, it.y - box.bottom, it.pressure) }
+                if (pts.size == 1) {
+                    circle(pts[0].x, pts[0].y, half(pts[0]))
+                    continue
+                }
+                for (i in 0 until pts.size - 1) {
+                    val a = pts[i]
+                    val b = pts[i + 1]
+                    val dx = b.x - a.x
+                    val dy = b.y - a.y
+                    val length = kotlin.math.sqrt(dx * dx + dy * dy)
+                    if (length < 1e-9) {
+                        circle(a.x, a.y, half(a))
+                        continue
+                    }
+                    val nx = -dy / length
+                    val ny = dx / length
+                    val ha = half(a)
+                    val hb = half(b)
+                    appendPolygon(
+                        listOf(
+                            a.x + nx * ha to a.y + ny * ha,
+                            b.x + nx * hb to b.y + ny * hb,
+                            b.x - nx * hb to b.y - ny * hb,
+                            a.x - nx * ha to a.y - ny * ha
+                        )
+                    )
+                }
+                for (p in pts) circle(p.x, p.y, half(p))
+            }
+            append(" Q")
+        }
+        val resources = if (opacity < 1.0) {
+            dict(
+                "ExtGState" to dict(
+                    "GS0" to dict(
+                        "ca" to real(opacity),
+                        "CA" to real(opacity),
+                        "BM" to PdfName(if (highlighter) "Multiply" else "Normal")
+                    )
+                )
+            )
+        } else {
+            null
+        }
+        val ap = form(listOf(0.0, 0.0, box.width, box.height), resources, content)
+
+        val inkList = ArrayList<PdfObject>(strokes.size)
+        val stored = ArrayList<PdfObject>(strokes.size)
+        for (stroke in strokes) {
+            val flat = ArrayList<PdfObject>(stroke.size * 2)
+            val packed = ArrayList<PdfObject>(stroke.size * 4)
+            for (point in stroke) {
+                flat += real(point.x)
+                flat += real(point.y)
+                packed += real(point.x)
+                packed += real(point.y)
+                packed += real(point.pressure)
+                packed += real(point.tilt.coerceIn(0.0, 90.0))
+            }
+            inkList += PdfArray(flat)
+            stored += dict(
+                "T" to PdfName(if (highlighter) "Highlighter" else "Pen"),
+                "W" to real(base),
+                "O" to real(opacity),
+                "C" to colorArray(spec.color),
+                "P" to PdfArray(packed)
+            )
+        }
+
+        val annot = LinkedHashMap<PdfName, PdfObject>()
+        val contents = spec.contents ?: if (highlighter) "Highlighter mark" else "Ink annotation"
+        common(
+            annot, "Ink", box, contents, spec.title, pageRef,
+            subject = if (highlighter) "Highlighter" else "Ink", creation = true
+        )
+        annot[PdfName("C")] = colorArray(spec.color)
+        if (opacity < 1.0) annot[PdfName("CA")] = real(opacity)
+        annot[PdfName("InkList")] = PdfArray(inkList)
+        annot[PdfName("BS")] = dict("W" to real(base), "S" to PdfName("S"))
+        annot[PdfName("AP")] = dict("N" to ap)
+        annot[PdfName(PdfPaperInk.KEY)] = dict(
+            "Type" to PdfName("PdfPaperInk"),
+            "Version" to PdfInteger(PdfPaperInk.VERSION.toLong()),
+            "Strokes" to PdfArray(stored)
+        )
+        return builder.add(PdfDict(annot))
+    }
+
+    /** Filled polygon from `(x, y)` pairs, closing back to the first point. */
+    private fun StringBuilder.appendPolygon(points: List<Pair<Double, Double>>) {
+        if (points.size < 3) return
+        points.forEachIndexed { index, (x, y) ->
+            append(' ').append(num(x)).append(' ').append(num(y))
+            append(if (index == 0) " m" else " l")
+        }
+        append(" h f")
+    }
+
+    /** A round join/cap as four Bézier quarters (§8.5.2.1). */
+    private fun StringBuilder.circle(x: Double, y: Double, radius: Double) {
+        if (radius <= 0.0) return
+        val k = radius * 0.5522847498307936
+        append(' ').append(num(x + radius)).append(' ').append(num(y)).append(" m")
+        append(' ').append(num(x + radius)).append(' ').append(num(y + k))
+        append(' ').append(num(x + k)).append(' ').append(num(y + radius))
+        append(' ').append(num(x)).append(' ').append(num(y + radius)).append(" c")
+        append(' ').append(num(x - k)).append(' ').append(num(y + radius))
+        append(' ').append(num(x - radius)).append(' ').append(num(y + k))
+        append(' ').append(num(x - radius)).append(' ').append(num(y)).append(" c")
+        append(' ').append(num(x - radius)).append(' ').append(num(y - k))
+        append(' ').append(num(x - k)).append(' ').append(num(y - radius))
+        append(' ').append(num(x)).append(' ').append(num(y - radius)).append(" c")
+        append(' ').append(num(x + k)).append(' ').append(num(y - radius))
+        append(' ').append(num(x + radius)).append(' ').append(num(y - k))
+        append(' ').append(num(x + radius)).append(' ').append(num(y)).append(" c f")
     }
 
     private fun buildNote(spec: NoteSpec, pageRef: PdfRef, pageBox: PdfRect?): List<PdfRef> {

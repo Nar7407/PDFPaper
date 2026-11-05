@@ -213,14 +213,23 @@ class ReadAloudController(
 
     fun setSpeed(rate: Float): List<SpeechAction> {
         speed = SpeechSpeed.nearest(rate)
+        return respeak()
+    }
+
+    /**
+     * Speaks the current paragraph again from its start. A new speed or voice
+     * only takes effect on the next utterance, so changing either mid-paragraph
+     * replays the paragraph rather than leaving the rest of it in the old one.
+     */
+    fun respeak(): List<SpeechAction> {
         val paragraph = currentParagraph
         if (!speaking || paragraph == null) return listOf(snapshot())
         return listOf(snapshot(), speakAction(paragraph))
     }
 
-    fun setSleep(option: SleepOption): List<SpeechAction> {
+    fun setSleep(option: SleepOption, now: Long = clock()): List<SpeechAction> {
         sleepOption = option
-        sleepStartedAt = if (option.minutes != null) clock() else 0L
+        sleepStartedAt = if (option.minutes != null) now else 0L
         if (option == SleepOption.END_OF_CHAPTER && chapterList.isEmpty) {
             message = "This document has no chapters, so the sleep timer is off"
         }

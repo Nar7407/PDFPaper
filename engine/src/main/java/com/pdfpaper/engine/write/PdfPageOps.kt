@@ -1,6 +1,12 @@
 package com.pdfpaper.engine.write
 
 import com.pdfpaper.engine.annot.AnnotationSpec
+import com.pdfpaper.engine.annot.PdfComments
+import com.pdfpaper.engine.annot.ReplySpec
+import com.pdfpaper.engine.annot.StatusSpec
+import com.pdfpaper.engine.annot.comments
+import com.pdfpaper.engine.form.FormFiller
+import com.pdfpaper.engine.geom.PdfRect
 import com.pdfpaper.engine.model.PdfArray
 import com.pdfpaper.engine.model.PdfDict
 import com.pdfpaper.engine.model.PdfDocument
@@ -77,7 +83,138 @@ object PdfPageOps {
             .assemble()
     }
 
-    /** Adds [degrees] clockwise rotation to each page in [pages] (§14.11.2). */
+    /**
+     * Incremental variant of [edit] (T55, §7.5.6): appends new annotation and
+     * form objects plus the rewritten page dictionaries to [originalBytes].
+     * Existing pages, resources, links, outlines and earlier revisions stay
+     * byte-for-byte untouched, so annotations, comments, stamps and form values
+     * can be saved without rewriting the document (and without invalidating a
+     * signature that covers the earlier bytes).
+     *
+     * Callers must pass the exact bytes the document was opened from. Files
+     * recovered by a rebuild scan have no startxref and fail with a clear
+     * message; use [edit] for those.
+     */
+    fun editIncremental(
+        document: PdfDocument,
+        originalBytes: ByteArray,
+        annotations: List<AnnotationSpec> = emptyList(),
+        formValues: Map<String, String> = emptyMap(),
+        droppedAnnots: Set<Int> = emptySet(),
+        version: String = PdfWriter.DEFAULT_VERSION
+    ): Result<ByteArray> = runCatching {
+        require(!document.isEncrypted) { "An encrypted document cannot be saved" }
+        document.file.startXrefOffset
+            ?: error("This file has no startxref; it cannot be saved incrementally")
+        val pages = document.pages()
+        val dropped = if (droppedAnnots.isEmpty()) {
+            emptySet()
+        } else {
+            PdfComments.deletionClosureFor(document, droppedAnnots.toList()).getOrThrow()
+        }
+        validateTargets(document, annotations)
+
+        val base = document.file
+        val startAt = maxOf(base.trailer.size, (base.entries.keys.maxOrNull() ?: 0) + 1)
+        val builder = PdfDocumentBuilder(version, document, startAt)
+        val root = base.trailer.root
+            ?: throw IllegalStateException("No document catalog; cannot save incrementally")
+        builder.root = PdfRef(root.objNum, root.gen)
+        builder.info = infoRef(document)
+        builder.id = idArray(document)
+
+        val writer = com.pdfpaper.engine.annot.AnnotationWriter(builder)
+        val pagesWithDropped = pages.indices.filter { index ->
+            val page = pages[index]
+            pageAnnots(document, page.dict["Annots"]).any { item ->
+                (item as? PdfRef)?.objNum in dropped
+            }
+        }.toSet()
+        val pageIndices = (annotations.map { it.pageIndex } + pagesWithDropped).toSortedSet()
+
+        for (pageIndex in pageIndices) {
+            val page = pages.getOrNull(pageIndex)
+                ?: throw IllegalArgumentException("Page $pageIndex is out of range")
+            val pageRef = PdfRef(page.objNum, base.entry(page.objNum)?.gen ?: 0)
+            val existing = pageAnnots(document, page.dict["Annots"])
+            val kept = existing.filter { item ->
+                val ref = item as? PdfRef
+                ref == null || ref.objNum !in dropped
+            }
+            val added = ArrayList<PdfRef>()
+            for (spec in annotations.filter { it.pageIndex == pageIndex }) {
+                added += writer.build(spec, pageRef, PdfRect.of(page.cropBox)) { num ->
+                    sourceAnnotRef(document, num, dropped)
+                }
+            }
+            if (added.isEmpty() && kept.size == existing.size) continue
+            val entries = LinkedHashMap(page.dict.entries)
+            val all = kept + added
+            if (all.isEmpty()) entries.remove(PdfName("Annots"))
+            else entries[PdfName("Annots")] = PdfArray(all)
+            builder.put(page.objNum, PdfDict(entries))
+        }
+
+        if (formValues.isNotEmpty()) FormFiller(builder).fill(formValues)
+        require(builder.entries().isNotEmpty()) { "Nothing changed; no objects to save" }
+        builder.buildIncremental(originalBytes)
+    }
+
+    private fun pageAnnots(document: PdfDocument, raw: com.pdfpaper.engine.model.PdfObject?): List<com.pdfpaper.engine.model.PdfObject> {
+        if (raw == null) return emptyList()
+        val resolved = when (raw) {
+            is PdfRef -> document.resolve(raw)
+            else -> raw
+        } ?: return emptyList()
+        return (resolved as? PdfArray)?.items.orEmpty()
+    }
+
+    private fun sourceAnnotRef(
+        document: PdfDocument,
+        objNum: Int,
+        dropped: Set<Int>
+    ): PdfRef? {
+        if (objNum in dropped) return null
+        val entry = document.file.entry(objNum) ?: return null
+        if (entry.kind == com.pdfpaper.engine.xref.EntryKind.FREE) return null
+        return PdfRef(objNum, entry.gen)
+    }
+
+    private fun validateTargets(document: PdfDocument, annotations: List<AnnotationSpec>) {
+        val targets = annotations.filter { it is ReplySpec || it is StatusSpec }
+        if (targets.isEmpty()) return
+        val ids = HashMap<Int, Int>()
+        fun collect(comments: List<com.pdfpaper.engine.annot.PdfComment>) {
+            for (comment in comments) {
+                ids[comment.id] = comment.pageIndex
+                collect(comment.replies)
+            }
+        }
+        collect(document.comments())
+        for (spec in targets) {
+            val target = when (spec) {
+                is ReplySpec -> spec.targetObjNum
+                is StatusSpec -> spec.targetObjNum
+                else -> continue
+            }
+            val page = ids[target] ?: throw IllegalArgumentException("No comment with id $target")
+            require(page == spec.pageIndex) {
+                "Comment $target is on page ${page + 1}, not ${spec.pageIndex + 1}"
+            }
+        }
+    }
+
+    /**
+     * Incremental variant of [applyAnnotations] (T55).
+     */
+    fun applyAnnotationsIncremental(
+        document: PdfDocument,
+        originalBytes: ByteArray,
+        annotations: List<AnnotationSpec>,
+        version: String = PdfWriter.DEFAULT_VERSION
+    ): Result<ByteArray> = editIncremental(document, originalBytes, annotations, version = version)
+
+
     fun rotate(document: PdfDocument, pages: List<Int>, degrees: Int): Result<ByteArray> {
         val rotated = pages.toSet()
         val selections = document.pages().indices.map { index ->

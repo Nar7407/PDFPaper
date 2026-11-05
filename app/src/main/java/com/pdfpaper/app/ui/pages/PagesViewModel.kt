@@ -5,13 +5,21 @@ import android.graphics.Bitmap
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.pdfpaper.app.data.AppSettings
+import com.pdfpaper.app.data.DocumentFingerprints
+import com.pdfpaper.app.data.DocumentLookStore
+import com.pdfpaper.app.data.LookResolution
+import com.pdfpaper.app.data.EinkResolution
 import com.pdfpaper.app.render.PageBitmapRenderer
+import com.pdfpaper.engine.eink.EinkSettings
 import com.pdfpaper.engine.io.FileSource
 import com.pdfpaper.engine.model.PdfDocument
 import com.pdfpaper.engine.page.PdfPage
 import com.pdfpaper.engine.page.pages
+import com.pdfpaper.engine.render.ColorTransform
 import com.pdfpaper.engine.render.PageBox
 import com.pdfpaper.engine.render.PageGeometry
+import com.pdfpaper.engine.render.PageTheme
 import com.pdfpaper.engine.security.PdfPasswordException
 import com.pdfpaper.engine.util.LruCache
 import com.pdfpaper.engine.write.PdfPageOps
@@ -85,11 +93,32 @@ class PagesViewModel(application: Application) : AndroidViewModel(application) {
     private val _thumbs = MutableStateFlow<Map<Int, Bitmap>>(emptyMap())
     val thumbs: StateFlow<Map<Int, Bitmap>> = _thumbs.asStateFlow()
 
+    /** T32/T32b: the theme thumbnails are painted with. */
+    private val _pageTheme = MutableStateFlow(PageTheme.OFF)
+    val pageTheme: StateFlow<PageTheme> = _pageTheme.asStateFlow()
+
+    /** T62: the document's own look, so a sepia book's thumbnails are sepia. */
+    private val _look = MutableStateFlow(ColorTransform.NONE)
+    val look: StateFlow<ColorTransform> = _look.asStateFlow()
+
+    /** T63: the resolved E-Ink profile for the thumbnails. */
+    private val _eink = MutableStateFlow(EinkSettings.OFF)
+
+    private val lookStore by lazy { DocumentLookStore(getApplication()) }
+    private var lookFingerprint: String? = null
+
+    /** Bumped on a theme change so visible cells ask for a new thumbnail. */
+    private val _themeGeneration = MutableStateFlow(0)
+    val themeGeneration: StateFlow<Int> = _themeGeneration.asStateFlow()
+
     private val docs = ArrayList<LoadedDocument>()
     private lateinit var history: PagePlanHistory
 
     /** Path of the primary document, kept so a password retry can reopen it (T13). */
     private var currentPath: String = ""
+
+    /** Extra documents an incoming multi-PDF share asked to merge (T47). */
+    private var pendingExtras: List<String> = emptyList()
 
     private val renderScope = CoroutineScope(SupervisorJob() + Dispatchers.Default.limitedParallelism(1))
     private val renderJobs = HashMap<Int, Job>()
@@ -101,8 +130,9 @@ class PagesViewModel(application: Application) : AndroidViewModel(application) {
 
     private val fontDir: File by lazy { File(getApplication<Application>().cacheDir, "embedded-fonts") }
 
-    fun load(path: String) {
+    fun load(path: String, extraPaths: List<String> = emptyList()) {
         currentPath = path
+        pendingExtras = extraPaths.filter { it.isNotBlank() && it != path }
         openPrimary(path, "")
     }
 
@@ -126,9 +156,15 @@ class PagesViewModel(application: Application) : AndroidViewModel(application) {
                 onSuccess = { doc ->
                     docs.clear()
                     docs += doc
+                    lookFingerprint = withContext(Dispatchers.IO) {
+                        DocumentFingerprints.of(getApplication(), path)
+                    }
                     history = PagePlanHistory(doc.pages.indices.map { PlanPage(0, it) })
                     publishPlan()
                     _state.value = PagesUiState(isLoading = false, displayName = doc.name)
+                    val extras = pendingExtras
+                    pendingExtras = emptyList()
+                    if (extras.isNotEmpty()) appendExtras(extras)
                 },
                 onFailure = { error ->
                     if (error is PdfPasswordException) {
@@ -145,6 +181,50 @@ class PagesViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
             )
+        }
+    }
+
+    /**
+     * Loads every extra document from a multi-PDF share and appends it, then
+     * publishes one undoable merge (T47).
+     */
+    private fun appendExtras(paths: List<String>) {
+        viewModelScope.launch {
+            val newPlan = history.plan.toMutableList()
+            var addedPages = 0
+            var addedDocs = 0
+            val failures = mutableListOf<String>()
+            for (path in paths) {
+                val opened = withContext(Dispatchers.IO) { runCatching { openDocument(path) } }
+                opened.fold(
+                    onSuccess = { doc ->
+                        val docIndex = docs.size
+                        docs += doc
+                        newPlan += doc.pages.indices.map { PlanPage(docIndex, it) }
+                        addedPages += doc.pages.size
+                        addedDocs++
+                    },
+                    onFailure = { error ->
+                        failures += if (error is PdfPasswordException) {
+                            "a password-protected PDF"
+                        } else {
+                            error.message ?: "a PDF that could not be opened"
+                        }
+                    }
+                )
+            }
+            if (addedDocs > 0) {
+                history.commit(newPlan)
+                publishPlan()
+            }
+            val summary = buildString {
+                append("Merged $addedPages page(s) from ${addedDocs + 1} PDFs")
+                if (failures.isNotEmpty()) {
+                    append(". Skipped: ")
+                    append(failures.joinToString("; "))
+                }
+            }
+            _state.update { it.copy(message = summary) }
         }
     }
 
@@ -272,6 +352,46 @@ class PagesViewModel(application: Application) : AndroidViewModel(application) {
 
     // -- Thumbnails -----------------------------------------------------------
 
+    /**
+     * Resolves the document's look and theme (T32/T32b, T62) for the thumbnails,
+     * exactly as the viewer does for the pages. A look saved for this document
+     * wins; otherwise the reader's default decides. Cached bitmaps are dropped
+     * and every visible cell re-requests its thumbnail when either changes.
+     */
+    fun refreshLook(systemDark: Boolean) {
+        val app = getApplication<Application>()
+        val resolved = LookResolution.resolve(
+            baseTheme = AppSettings.resolvedPageTheme(app, currentPath, systemDark),
+            documentLook = lookStore.load(lookFingerprint),
+            legacyMode = AppSettings.documentThemeMode(app, currentPath),
+            defaultLook = AppSettings.defaultColorTransform(app),
+            followSystem = AppSettings.pageThemeFollowsSystem(app),
+            systemDark = systemDark
+        )
+        // T63: organizer thumbnails follow the same E-Ink profile as the
+        // viewer, so a 1-bit library looks like the pages it opens.
+        val eink = EinkResolution.resolve(
+            device = AppSettings.einkSettings(app),
+            enabled = AppSettings.einkEnabled(app),
+            documentProfile = lookStore.loadEink(lookFingerprint)
+        ).settings
+        if (
+            resolved.theme == _pageTheme.value &&
+            resolved.transform == _look.value &&
+            eink == _eink.value
+        ) {
+            return
+        }
+        _pageTheme.value = resolved.theme
+        _look.value = resolved.transform
+        _eink.value = eink
+        _themeGeneration.value += 1
+        renderJobs.values.forEach { it.cancel() }
+        renderJobs.clear()
+        cache.clear()
+        _thumbs.value = emptyMap()
+    }
+
     fun onThumbVisible(position: Int, targetPixelWidth: Int = THUMB_PIXEL_WIDTH) {
         val entry = _plan.value.getOrNull(position) ?: return
         val doc = docs.getOrNull(entry.docIndex) ?: return
@@ -286,7 +406,15 @@ class PagesViewModel(application: Application) : AndroidViewModel(application) {
         val scale = PageGeometry.scaleForPixelWidth(doc.boxes[entry.sourceIndex], targetPixelWidth).coerceIn(0.05, 4.0)
         renderJobs[position] = renderScope.launch {
             val bitmap = try {
-                PageBitmapRenderer.render(page, scale, fontDir = fontDir, extraRotation = entry.rotationDelta).bitmap
+                PageBitmapRenderer.render(
+                    page,
+                    scale,
+                    fontDir = fontDir,
+                    extraRotation = entry.rotationDelta,
+                    theme = _pageTheme.value,
+                    transform = _look.value,
+                    eink = _eink.value
+                ).bitmap
             } catch (_: Throwable) {
                 null
             }

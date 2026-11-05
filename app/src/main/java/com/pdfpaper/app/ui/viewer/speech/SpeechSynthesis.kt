@@ -48,6 +48,12 @@ interface SpeechSynthesis {
     /** Speaks [text]; [utteranceId] comes back in the listener's callbacks. */
     fun speak(text: String, utteranceId: String, rate: Float)
 
+    /**
+     * Switches to [key]'s voice. False when the device no longer has it, so
+     * the caller can say so; a host without voice switching keeps the default.
+     */
+    fun setVoice(key: SpeechVoiceKey?): Boolean = false
+
     /** Stops the current utterance and keeps the engine usable. */
     fun stop()
 

@@ -18,6 +18,7 @@ import android.media.AudioManager
 import android.media.MediaMetadata
 import android.media.session.MediaSession
 import android.media.session.PlaybackState
+import android.os.Build
 import android.os.IBinder
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
@@ -28,10 +29,13 @@ import com.pdfpaper.app.ui.viewer.speech.AndroidSpeechSynthesis
 import com.pdfpaper.app.ui.viewer.speech.FocusEvent
 import com.pdfpaper.app.ui.viewer.speech.ReadAloudPlaybackState
 import com.pdfpaper.app.ui.viewer.speech.ReadAloudSession
+import com.pdfpaper.app.ui.viewer.speech.SleepOption
 import com.pdfpaper.app.ui.viewer.speech.SpeechChapterList
+import com.pdfpaper.app.ui.viewer.speech.SpeechSpeed
 import com.pdfpaper.app.ui.viewer.speech.SpeechListener
 import com.pdfpaper.app.ui.viewer.speech.SpeechPageSource
 import com.pdfpaper.app.ui.viewer.speech.SpeechPosition
+import com.pdfpaper.app.ui.viewer.speech.SpeechVoiceKey
 import com.pdfpaper.engine.model.PdfDocument
 import com.pdfpaper.engine.page.pages
 import com.pdfpaper.engine.speech.ChapterSource
@@ -44,6 +48,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
@@ -120,6 +126,9 @@ class ReadAloudService : Service() {
     /** The job that publishes the session's state; cancelled with the session. */
     private var publisher: Job? = null
 
+    /** Checks the sleep countdown once a second while a reading runs. */
+    private var sleepTicker: Job? = null
+
     /** The engine's first answer, awaited before the reading starts. */
     private var engineReady: CompletableDeferred<Pair<Boolean, String?>>? = null
 
@@ -134,10 +143,15 @@ class ReadAloudService : Service() {
             setCallback(mediaCallback)
             setFlags(MediaSession.FLAG_HANDLES_MEDIA_BUTTONS)
             // The platform sends the media keys to this receiver; it turns them
-            // into the same commands the notification sends.
-            setMediaButtonBroadcastReceiver(
-                ComponentName(this@ReadAloudService, ReadAloudMediaButtonReceiver::class.java)
-            )
+            // into the same commands the notification sends. The broadcast
+            // receiver form exists from API 31; on 26-30 the notification's
+            // media actions remain the only entry point (and this call would
+            // otherwise fail at runtime on those devices).
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                setMediaButtonBroadcastReceiver(
+                    ComponentName(this@ReadAloudService, ReadAloudMediaButtonReceiver::class.java)
+                )
+            }
             isActive = true
         }
         focusRequest = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
@@ -259,7 +273,8 @@ class ReadAloudService : Service() {
                 synthesis = engine,
                 pages = source,
                 scope = scope,
-                initialSpeed = AppSettings.speechSpeed(this@ReadAloudService)
+                initialSpeed = AppSettings.speechSpeed(this@ReadAloudService),
+                initialSleep = AppSettings.speechSleep(this@ReadAloudService)
             )
             session = created
             publisher = scope.launch {
@@ -272,6 +287,7 @@ class ReadAloudService : Service() {
             }
             requestFocus()
             created.start(documentName, position)
+            startSleepTicker()
             // The voice message comes after the start, which resets the state.
             created.onReady(true, answer.second)
         }
@@ -292,6 +308,8 @@ class ReadAloudService : Service() {
 
     /** Stops the reading but keeps the service (and its notification) alive. */
     private fun stopCurrentReading() {
+        sleepTicker?.cancel()
+        sleepTicker = null
         publisher?.cancel()
         publisher = null
         session?.stop()
@@ -423,6 +441,39 @@ class ReadAloudService : Service() {
 
         override fun previousChapter() {
             session?.previousChapter()
+        }
+
+        override fun setSpeed(rate: Float) {
+            val safe = SpeechSpeed.nearest(rate)
+            AppSettings.setSpeechSpeed(this@ReadAloudService, safe)
+            session?.setSpeed(safe)
+        }
+
+        override fun setSleep(option: SleepOption) {
+            AppSettings.setSpeechSleep(this@ReadAloudService, option)
+            session?.setSleep(option)
+        }
+
+        override fun setVoice(key: SpeechVoiceKey?) {
+            AppSettings.setSpeechVoice(this@ReadAloudService, key)
+            val changed = session?.setVoice(key) ?: return
+            if (!changed) {
+                session?.showMessage("That voice is gone; the current voice is kept")
+            }
+        }
+    }
+
+    /**
+     * The sleep timer is a wall-clock countdown, and the controller only checks
+     * it when asked; this asks once a second while the service is reading.
+     */
+    private fun startSleepTicker() {
+        sleepTicker?.cancel()
+        sleepTicker = scope.launch {
+            while (isActive) {
+                delay(1_000L)
+                session?.tick()
+            }
         }
     }
 

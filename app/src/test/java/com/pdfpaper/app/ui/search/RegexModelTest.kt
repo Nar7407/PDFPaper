@@ -293,7 +293,20 @@ class RegexModelTest {
                 row(fileId = 2, uri = "content://b", page = 2)
             )
         )
-        assertEquals("3 matches in 2 files (2 pages)", state.summary)
+        // A page is a (file, page) pair: page 2 of two files is two pages.
+        assertEquals("3 matches in 2 files (3 pages)", state.summary)
+    }
+
+    @Test
+    fun librarySummaryCountsTheSamePageIndexInTwoFilesSeparately() {
+        val state = RegexUiState(
+            scope = RegexScope.LIBRARY,
+            rows = listOf(
+                row(fileId = 1, uri = "content://a", page = 0, text = "AB-1"),
+                row(fileId = 2, uri = "content://b", page = 0, text = "AB-1")
+            )
+        )
+        assertEquals("2 matches in 2 files (2 pages)", state.summary)
     }
 
     @Test

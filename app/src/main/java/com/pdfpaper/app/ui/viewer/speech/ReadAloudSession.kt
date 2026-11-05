@@ -1,5 +1,7 @@
 package com.pdfpaper.app.ui.viewer.speech
 
+import com.pdfpaper.engine.speech.ChapterSource
+import com.pdfpaper.engine.speech.SpeechChapter
 import com.pdfpaper.engine.speech.SpeechPage
 import com.pdfpaper.engine.text.TextRect
 import kotlinx.coroutines.CoroutineScope
@@ -28,6 +30,13 @@ data class ReadAloudPlaybackState(
     val wordPageIndex: Int = -1,
     val wordRects: List<TextRect> = emptyList(),
     val paragraphOnly: Boolean = false,
+    /** The speed the reading is using, so the sheet shows the live value. */
+    val speed: Float = 1f,
+    /** The sleep option chosen for this reading. */
+    val sleep: SleepOption = SleepOption.OFF,
+    /** The chapters of the document, for the sheet's chapter list. */
+    val chapters: List<SpeechChapter> = emptyList(),
+    val chapterSource: ChapterSource? = null,
     val message: String? = null,
     val finished: Boolean = false,
     val scrollPageIndex: Int = -1,
@@ -52,7 +61,8 @@ class ReadAloudSession(
     private val synthesis: SpeechSynthesis,
     private val pages: SpeechPageSource,
     private val scope: CoroutineScope,
-    initialSpeed: Float = 1f
+    initialSpeed: Float = 1f,
+    initialSleep: SleepOption = SleepOption.OFF
 ) {
 
     private val _state = MutableStateFlow(ReadAloudPlaybackState())
@@ -62,6 +72,7 @@ class ReadAloudSession(
     private var controller: ReadAloudController? = null
 
     private var speed = SpeechSpeed.nearest(initialSpeed)
+    private var sleep = initialSleep
 
     /** The pages already extracted. Only a few are kept, never the whole file. */
     private val cache = LinkedHashMap<Int, SpeechPage>()
@@ -86,16 +97,22 @@ class ReadAloudSession(
         this.controller?.stop()
         cache.clear()
         focusPause = null
+        val chapters = pages.chapters()
         val created = ReadAloudController(
-            chapters = pages.chapters(),
+            chapters = chapters,
             feed = feed,
             initialSpeed = speed,
+            initialSleep = sleep,
             pageCount = { pages.pageCount() }
         )
         controller = created
         _state.value = ReadAloudPlaybackState(
             active = true,
             documentName = documentName,
+            speed = speed,
+            sleep = sleep,
+            chapters = chapters.chapters,
+            chapterSource = chapters.source,
             scrollToken = _state.value.scrollToken
         )
         run(created.start(position))
@@ -164,8 +181,47 @@ class ReadAloudSession(
     /** Changes the pace. The current paragraph is spoken again at the new pace. */
     fun setSpeed(rate: Float) {
         speed = SpeechSpeed.nearest(rate)
+        _state.value = _state.value.copy(speed = speed)
         val current = controller ?: return
         run(current.setSpeed(speed))
+    }
+
+    /** Sets the sleep timer; [now] is only a test seam. */
+    fun setSleep(option: SleepOption, now: Long = System.currentTimeMillis()) {
+        sleep = option
+        _state.value = _state.value.copy(sleep = option)
+        val current = controller ?: return
+        run(current.setSleep(option, now))
+    }
+
+    /**
+     * Checks the sleep countdown. The service calls this once a second; the
+     * controller pauses the reading when the timer runs out.
+     */
+    fun tick(now: Long = System.currentTimeMillis()) {
+        val current = controller ?: return
+        run(current.tick(now))
+    }
+
+    /**
+     * Changes the voice of the running reading. [ok] is false when the device
+     * no longer has that voice; the caller then keeps the default voice and
+     * says so, rather than silently reading in another voice.
+     */
+    fun setVoice(key: SpeechVoiceKey?): Boolean {
+        val changed = synthesis.setVoice(key)
+        if (changed) {
+            // A voice only applies to the next utterance, so replay the
+            // paragraph that was being spoken rather than switching halfway
+            // through it.
+            controller?.let { run(it.respeak()) }
+        }
+        return changed
+    }
+
+    /** Shows a one-off message under the bar (a missing saved voice, say). */
+    fun showMessage(message: String) {
+        _state.value = _state.value.copy(message = message)
     }
 
     // ------------------------------------------------------------- callbacks
@@ -293,6 +349,8 @@ class ReadAloudSession(
             paragraphIndex = state.position.paragraphIndex,
             chapterTitle = state.chapter?.title,
             paragraphText = state.paragraphText,
+            speed = state.speed,
+            sleep = state.sleep,
             message = state.message
         )
     }
