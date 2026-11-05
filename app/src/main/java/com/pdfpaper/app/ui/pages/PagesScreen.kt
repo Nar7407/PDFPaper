@@ -104,6 +104,9 @@ fun PagesScreen(
     // T32/T32b + T62: thumbnails follow the same theme and look as the viewer.
     LaunchedEffect(path, systemDark) {
         viewModel.refreshLook(systemDark)
+        // T68b: the layer choice is restored per document, so it must be read
+        // again after a new fingerprint exists.
+        viewModel.refreshThumbnailLayers()
     }
     LaunchedEffect(hint) {
         if (!hint.isNullOrBlank()) snackbar.showSnackbar(hint)

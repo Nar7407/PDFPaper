@@ -97,29 +97,45 @@ BUILD FAILED in 23s
 * Nothing is written to the PDF; `AnnotationFilter.toEngineFilter()` is still the
   only bridge between the UI state and the engine.
 
+## Step 3 — filter threaded through visible render paths: done
+
+### Implemented
+
+**`app/src/main/java/com/pdfpaper/app/ui/pages/PagesViewModel.kt`**
+* `annotationLayerStore` (lazy), `layers` (`SHOW_ALL`), `layerFilter` returning
+  `layers.toEngineFilter()`.
+* Restore: after the fingerprint is resolved in `openPrimary()`, `layers` is
+  loaded from the store and the thumbnail `cache` is cleared (stale bitmaps are
+  keyed by position and must not survive across documents).
+* `refreshThumbnailLayers()`: loads by fingerprint, no-ops when unchanged,
+  otherwise drops render jobs, the `LruCache`, the thumbs map and bumps
+  `_themeGeneration` so grid cells ask again.
+* The grid cell (`onThumbVisible`) paints with `annotationFilter = layerFilter`.
+* `PagesScreen.kt` calls `refreshThumbnailLayers()` on the look/theme effect.
+
+**`app/src/main/java/com/pdfpaper/app/ui/viewer/ViewerViewModel.kt`** — six
+user-visible render sites now pass
+`annotationFilter = _annotationLayers.value.toEngineFilter()`:
+`renderFitPreview`, the reflow-region render, `onPageVisible`,
+`presentCache` render, the column-flow segment render and the flow-presenter
+render. The look-hint render stays `SHOW_ALL` (detection, not painting).
+
+**`app/src/main/java/com/pdfpaper/app/ui/pages/PagesScreen.kt`**
+* Added the call into the theme/look `LaunchedEffect` so the thumb filter is
+  refreshed when the screen resumes and its fingerprint exists.
+
 No engine, store, model or test file was changed in this step.
 
 ### Real command output
 
 ```
-> .\gradlew.bat :app:compileDebugKotlin :app:testDebugUnitTest --tests "com.pdfpaper.app.ui.pages.*"
-36 tests completed, 2 failed
-* PagesThumbnailLayersTest: 2 failed (NotImplementedError: T68b — step 3 stubs)
-BUILD FAILED in 59s
-```
-
-Full JVM suite and device-test compile (same 7 step-3/step-5 stub failures as
-before this step, so no regression; the androidTest warning is the existing
-unused `report` local in `ViewerLayersDeviceTest`):
-
-```
 > .\gradlew.bat :app:testDebugUnitTest :app:compileDebugAndroidTestKotlin
-585 tests completed, 7 failed
-* ExportAnnotationOutputModeTest: 5 failed (NotImplementedError: T68b — step 5)
-* PagesThumbnailLayersTest: 2 failed (NotImplementedError: T68b — step 3)
+585 tests completed, 5 failed
+* com.pdfpaper.app.ui.export.ExportAnnotationOutputModeTest: 5 failed
+  (NotImplementedError: T68b — step 5, untouched stubs)
+BUILD FAILED in 1m 23s
 
 > .\gradlew.bat :app:compileDebugAndroidTestKotlin
-w: .../ViewerLayersDeviceTest.kt:91:13 Variable 'report' is never used
-BUILD SUCCESSFUL in 14s
+BUILD SUCCESSFUL in 4s
 ```
 

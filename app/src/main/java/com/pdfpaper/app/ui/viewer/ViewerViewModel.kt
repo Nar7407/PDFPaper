@@ -1517,7 +1517,8 @@ class ViewerViewModel(application: Application) : AndroidViewModel(application) 
                     fontDir = fontDir,
                     theme = _pageTheme.value,
                     transform = _look.value,
-                    eink = _eink.value.settings
+                    eink = _eink.value.settings,
+                    annotationFilter = _annotationLayers.value.toEngineFilter()
                 )
             }.getOrNull()
         }
@@ -1688,7 +1689,8 @@ class ViewerViewModel(application: Application) : AndroidViewModel(application) 
                         fontDir = fontDir,
                         theme = _pageTheme.value,
                         transform = _look.value,
-                        eink = _eink.value.settings
+                        eink = _eink.value.settings,
+                        annotationFilter = _annotationLayers.value.toEngineFilter()
                     )
                 }.getOrNull()
             }
@@ -1915,7 +1917,8 @@ class ViewerViewModel(application: Application) : AndroidViewModel(application) 
                     fontDir = fontDir,
                     theme = _pageTheme.value,
                     transform = _look.value,
-                    eink = _eink.value.settings
+                    eink = _eink.value.settings,
+                    annotationFilter = _annotationLayers.value.toEngineFilter()
                 )
             } catch (t: Throwable) {
                 _message.value = "Page ${index + 1} could not be rendered: ${t.message}"
@@ -1972,7 +1975,8 @@ class ViewerViewModel(application: Application) : AndroidViewModel(application) 
                     fontDir = fontDir,
                     theme = _pageTheme.value,
                     transform = _look.value,
-                    eink = _eink.value.settings
+                    eink = _eink.value.settings,
+                    annotationFilter = _annotationLayers.value.toEngineFilter()
                 )
             }.getOrNull() ?: return@withContext null
             presentCache.put(index, CachedPage(rendered.plan, rendered.bitmap))
@@ -2212,7 +2216,8 @@ class ViewerViewModel(application: Application) : AndroidViewModel(application) 
                         fontDir = fontDir,
                         theme = _pageTheme.value,
                         transform = _look.value,
-                        eink = _eink.value.settings
+                        eink = _eink.value.settings,
+                        annotationFilter = _annotationLayers.value.toEngineFilter()
                     )
                 }.getOrNull()
             }
@@ -2372,7 +2377,8 @@ class ViewerViewModel(application: Application) : AndroidViewModel(application) 
                     fontDir = fontDir,
                     theme = _pageTheme.value,
                     transform = _look.value,
-                    eink = _eink.value.settings
+                    eink = _eink.value.settings,
+                    annotationFilter = _annotationLayers.value.toEngineFilter()
                 )
             }.getOrNull() ?: return@withContext null
             val full = rendered.bitmap

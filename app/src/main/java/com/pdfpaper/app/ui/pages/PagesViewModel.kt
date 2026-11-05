@@ -6,10 +6,12 @@ import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.pdfpaper.app.data.AppSettings
+import com.pdfpaper.app.data.AnnotationLayerStore
 import com.pdfpaper.app.data.DocumentFingerprints
 import com.pdfpaper.app.data.DocumentLookStore
 import com.pdfpaper.app.data.LookResolution
 import com.pdfpaper.app.data.EinkResolution
+import com.pdfpaper.app.ui.viewer.AnnotationLayersState
 import com.pdfpaper.app.render.PageBitmapRenderer
 import com.pdfpaper.engine.annot.AnnotationFilter
 import com.pdfpaper.engine.eink.EinkSettings
@@ -84,11 +86,29 @@ class PagesViewModel(application: Application) : AndroidViewModel(application) {
     private val _state = MutableStateFlow(PagesUiState())
     val state: StateFlow<PagesUiState> = _state.asStateFlow()
 
-    // T68b: Thumbnail annotation layers
-    val layerFilter: AnnotationFilter
-        get() = TODO("T68b")
+    // T68b: thumbnail annotation layers, restored from the same store as the viewer.
+    private val annotationLayerStore by lazy { AnnotationLayerStore(getApplication()) }
+    private var layers: AnnotationLayersState = AnnotationLayersState.SHOW_ALL
 
-    fun refreshThumbnailLayers(): Unit = TODO("T68b")
+    /** The filter every thumbnail render paints with. */
+    val layerFilter: AnnotationFilter
+        get() = layers.toEngineFilter()
+
+    /**
+     * Picks up the layer choice saved for the open document. A change drops the
+     * cached bitmaps (they were painted with the old filter) and bumps the
+     * generation so visible cells ask again.
+     */
+    fun refreshThumbnailLayers() {
+        val next = annotationLayerStore.load(lookFingerprint)
+        if (next == layers) return
+        layers = next
+        renderJobs.values.forEach { it.cancel() }
+        renderJobs.clear()
+        cache.clear()
+        _thumbs.value = emptyMap()
+        _themeGeneration.value += 1
+    }
 
     private val _plan = MutableStateFlow<List<PlanPage>>(emptyList())
     val plan: StateFlow<List<PlanPage>> = _plan.asStateFlow()
@@ -166,6 +186,8 @@ class PagesViewModel(application: Application) : AndroidViewModel(application) {
                     lookFingerprint = withContext(Dispatchers.IO) {
                         DocumentFingerprints.of(getApplication(), path)
                     }
+                    layers = annotationLayerStore.load(lookFingerprint)
+                    cache.clear()
                     history = PagePlanHistory(doc.pages.indices.map { PlanPage(0, it) })
                     publishPlan()
                     _state.value = PagesUiState(isLoading = false, displayName = doc.name)
@@ -420,7 +442,8 @@ class PagesViewModel(application: Application) : AndroidViewModel(application) {
                     extraRotation = entry.rotationDelta,
                     theme = _pageTheme.value,
                     transform = _look.value,
-                    eink = _eink.value
+                    eink = _eink.value,
+                    annotationFilter = layerFilter
                 ).bitmap
             } catch (_: Throwable) {
                 null
