@@ -59,8 +59,10 @@ class TextLine internal constructor(
  * whitespace (a gutter wider than a word space, with text on both sides at the
  * same height), each column is then read top to bottom and left to right.
  *
- * Limitation: a full-width block (a heading) that spans a gutter keeps the
- * page single-column, so the columns below are read line by line instead.
+ * A full-width block (a title or an abstract) that spans the gutter is read
+ * before the columns when it sits above them and after them when it sits
+ * below. A spanning block beside the columns still keeps the page single-
+ * column: there is no honest place to put it in the reading order.
  */
 class PageLayout internal constructor(
     val lines: List<TextLine>,
@@ -84,6 +86,36 @@ class PageLayout internal constructor(
             lineRects(line, from, to, out)
         }
         return out
+    }
+
+    /**
+     * Text whose glyphs fall inside [boxes] (T56). Characters are placed with
+     * the same interpolation as [rectsFor]; a character counts when at least
+     * half of its box overlaps one of [boxes]. Hits are returned per line in
+     * reading order, joined with '\n', and the run between the first and last
+     * hit character is kept whole (so the words a highlight covers read
+     * naturally).
+     */
+    fun textInRects(boxes: List<TextRect>): String {
+        val queries = boxes.filter { !it.isEmpty }
+        if (queries.isEmpty() || lines.isEmpty()) return ""
+        val out = StringBuilder()
+        for (line in lines) {
+            var first = -1
+            var last = -1
+            for (offset in 0 until line.text.length) {
+                val rect = charRect(line, offset) ?: continue
+                if (queries.none { overlaps(rect, it) }) continue
+                if (first < 0) first = offset
+                last = offset
+            }
+            if (first < 0) continue
+            val text = line.text.substring(first, last + 1).trim()
+            if (text.isEmpty()) continue
+            if (out.isNotEmpty()) out.append('\n')
+            out.append(text)
+        }
+        return out.toString()
     }
 
     /**
@@ -216,6 +248,29 @@ class PageLayout internal constructor(
 /** Lays [pageText] out in reading order, ready for search and selection. */
 fun pageLayout(pageText: PageText): PageLayout = layoutOf(readingOrder(pageText.runs))
 
+/**
+ * Body size of the page (T33): the median line size, weighted by how much text
+ * each line carries, so a large title does not decide it. 0 for an empty page.
+ */
+fun PageLayout.bodyFontSize(): Double {
+    val samples = ArrayList<Pair<Double, Int>>(lines.size)
+    for (line in lines) {
+        val length = line.text.trim().length
+        if (length == 0) continue
+        val size = line.runs.maxOf { it.fontSize }
+        if (size.isFinite() && size > 0.0) samples += size to length
+    }
+    if (samples.isEmpty()) return 0.0
+    samples.sortBy { it.first }
+    val total = samples.sumOf { it.second }
+    var seen = 0
+    for ((size, weight) in samples) {
+        seen += weight
+        if (seen * 2 >= total) return size
+    }
+    return samples.last().first
+}
+
 /** Extracts [page]'s text and lays it out in reading order. */
 fun PdfPage.layout(): PageLayout = pageLayout(extractText())
 
@@ -230,9 +285,52 @@ private fun readingOrder(runs: List<PdfTextRun>): List<PdfTextRun> = arrange(run
 
 private fun arrange(runs: List<PdfTextRun>, depth: Int): List<PdfTextRun> {
     if (runs.size <= 1 || depth >= MAX_DEPTH) return sortLines(runs)
+    val wide = wideColumnSplit(runs)
+    if (wide != null) {
+        return sortLines(wide.header) +
+            arrange(wide.left, depth + 1) +
+            arrange(wide.right, depth + 1) +
+            sortLines(wide.tail)
+    }
     val split = columnSplit(runs) ?: return sortLines(runs)
     val (left, right) = split
     return arrange(left, depth + 1) + arrange(right, depth + 1)
+}
+
+/** A page whose columns are topped or footed by a block that spans the gutter. */
+private class WideSplit(
+    val header: List<PdfTextRun>,
+    val left: List<PdfTextRun>,
+    val right: List<PdfTextRun>,
+    val tail: List<PdfTextRun>
+)
+
+/**
+ * Finds a column gutter that a full-width title, abstract or footer also
+ * crosses. The gutter is looked for among the runs narrow enough to sit in one
+ * column; a spanning run belongs before the columns when it is wholly above
+ * them and after them when it is wholly below. Anything else (a spanning block
+ * level with the columns) is left to the single-column fallback: guessing where
+ * it belongs would read the page out of order.
+ */
+private fun wideColumnSplit(runs: List<PdfTextRun>): WideSplit? {
+    if (runs.size <= 3) return null
+    val totalWidth = runs.maxOf { max(it.x0, it.x1) } - runs.minOf { min(it.x0, it.x1) }
+    if (totalWidth <= 0.0) return null
+    val narrow = runs.filter { abs(max(it.x0, it.x1) - min(it.x0, it.x1)) < totalWidth * 0.6 }
+    if (narrow.size < 2) return null
+    val gap = widestGutter(narrow) ?: dominantGutter(runs) ?: return null
+    val spanning = runs.filter { min(it.x0, it.x1) < gap.mid && max(it.x0, it.x1) > gap.mid }
+    if (spanning.isEmpty()) return null
+    val left = runs.filter { max(it.x0, it.x1) <= gap.mid && it !in spanning }
+    val right = runs.filter { min(it.x0, it.x1) >= gap.mid && it !in spanning }
+    if (left.isEmpty() || right.isEmpty()) return null
+    val top = max(left.maxOf { max(it.y0, it.y1) }, right.maxOf { max(it.y0, it.y1) })
+    val bottom = min(left.minOf { min(it.y0, it.y1) }, right.minOf { min(it.y0, it.y1) })
+    val header = spanning.filter { min(it.y0, it.y1) >= top }
+    val tail = spanning.filter { max(it.y0, it.y1) <= bottom }
+    if (header.size + tail.size != spanning.size) return null
+    return WideSplit(header, left, right, tail)
 }
 
 /**
@@ -242,6 +340,52 @@ private fun arrange(runs: List<PdfTextRun>, depth: Int): List<PdfTextRun> {
  * single line is not mistaken for a column).
  */
 private fun columnSplit(runs: List<PdfTextRun>): Pair<List<PdfTextRun>, List<PdfTextRun>>? {
+    val gap = widestGutter(runs) ?: return null
+    val left = runs.filter { max(it.x0, it.x1) <= gap.mid }
+    val right = runs.filter { min(it.x0, it.x1) >= gap.mid }
+    if (left.isEmpty() || right.isEmpty()) return null
+    return left to right
+}
+
+/**
+ * The gutter between the two most common line starts. Used when a spanning
+ * run bridges the whitespace for [widestGutter]: the columns still start at
+ * two stable x positions, and the gap between the left column's right edge and
+ * the right column's left edge is the gutter.
+ */
+private fun dominantGutter(runs: List<PdfTextRun>): Gap? {
+    if (runs.size < 4) return null
+    val totalWidth = runs.maxOf { max(it.x0, it.x1) } - runs.minOf { min(it.x0, it.x1) }
+    if (totalWidth <= 0.0) return null
+    val starts = runs.groupBy { (min(it.x0, it.x1) / 4.0).toInt() }
+        .mapValues { it.value.size }
+        .entries
+        .filter { it.value >= 2 }
+        .sortedByDescending { it.value }
+    if (starts.size < 2) return null
+    val leftStart = starts[0].key * 4.0
+    val rightEntry = starts.firstOrNull {
+        it.key * 4.0 - leftStart > totalWidth * 0.25
+    } ?: return null
+    val rightStart = rightEntry.key * 4.0
+    val columnRuns = runs.filter {
+        abs(max(it.x0, it.x1) - min(it.x0, it.x1)) < totalWidth * 0.6
+    }
+    val leftRuns = columnRuns.filter { abs(min(it.x0, it.x1) - leftStart) <= 8.0 }
+    val rightRuns = columnRuns.filter { abs(min(it.x0, it.x1) - rightStart) <= 8.0 }
+    if (leftRuns.isEmpty() || rightRuns.isEmpty()) return null
+    val leftEdge = leftRuns.maxOf { max(it.x0, it.x1) }
+    val rightEdge = rightRuns.minOf { min(it.x0, it.x1) }
+    val median = medianFontSize(runs)
+    val minGutter = max(MIN_GUTTER, median * GUTTER_EM)
+    if (rightEdge - leftEdge < minGutter) return null
+    val mid = (leftEdge + rightEdge) / 2.0
+    if (sideBySideHeight(runs, mid) < median * 1.5) return null
+    return Gap(mid, rightEdge - leftEdge)
+}
+
+/** The widest gutter with text on both sides, or null when there is none. */
+private fun widestGutter(runs: List<PdfTextRun>): Gap? {
     val gaps = xGaps(runs)
     if (gaps.isEmpty()) return null
     val median = medianFontSize(runs)
@@ -250,10 +394,7 @@ private fun columnSplit(runs: List<PdfTextRun>): Pair<List<PdfTextRun>, List<Pdf
     for (gap in gaps.sortedByDescending { it.width }) {
         if (gap.width < minGutter) break
         if (sideBySideHeight(runs, gap.mid) < minHeight) continue
-        val left = runs.filter { max(it.x0, it.x1) <= gap.mid }
-        val right = runs.filter { min(it.x0, it.x1) >= gap.mid }
-        if (left.isEmpty() || right.isEmpty()) continue
-        return left to right
+        return gap
     }
     return null
 }
@@ -377,6 +518,36 @@ private fun layoutOf(ordered: List<PdfTextRun>): PageLayout {
         index = next
     }
     return PageLayout(lines, flat.toString())
+}
+
+/**
+ * Box of the character at [offset] in [line], placed by linear interpolation
+ * along the run's baseline (the same rule [PageLayout.rectsFor] uses). Offsets
+ * of an inserted between-run space have no glyph and return null.
+ */
+private fun charRect(line: TextLine, offset: Int): TextRect? {
+    for (index in line.runs.indices) {
+        val run = line.runs[index]
+        val length = run.text.length
+        if (length == 0) continue
+        val startInRun = line.runStarts[index]
+        if (offset < startInRun || offset >= startInRun + length) continue
+        val fa = (offset - startInRun).toDouble() / length
+        val fb = (offset - startInRun + 1).toDouble() / length
+        val xa = run.originX + fa * (run.endX - run.originX)
+        val xb = run.originX + fb * (run.endX - run.originX)
+        val box = run.box()
+        return TextRect(min(xa, xb), box.y0, max(xa, xb), box.y1)
+    }
+    return null
+}
+
+/** True when at least half of [char] lies inside [box] on both axes. */
+private fun overlaps(char: TextRect, box: TextRect): Boolean {
+    val dx = min(char.x1, box.x1) - max(char.x0, box.x0)
+    val dy = min(char.y1, box.y1) - max(char.y0, box.y0)
+    if (dx <= 0.0 || dy <= 0.0) return false
+    return dx >= char.width * 0.5 && dy >= char.height * 0.5
 }
 
 /** A space belongs between two same-line runs when the gap is bigger than one. */
