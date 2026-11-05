@@ -15,10 +15,13 @@ import com.pdfpaper.engine.page.PdfPage
  * and falls back to a synthetic appearance built from the annotation's geometry
  * otherwise.
  */
+
+/** Filtered variant (T68): only annotations matching [filter] are painted. */
 fun PdfPage.buildAnnotationDisplayList(
     filter: AnnotationFilter,
     decoder: ExternalImageDecoder? = null
-): DisplayList = TODO("T68")
+): DisplayList =
+    DisplayListBuilder(this, decoder).buildAnnotations(annotations().filter(filter::matches))
 
 fun PdfPage.buildAnnotationDisplayList(decoder: ExternalImageDecoder? = null): DisplayList =
     DisplayListBuilder(this, decoder).buildAnnotations(annotations())
